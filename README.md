@@ -41,10 +41,10 @@ pip install pycryptodome
 ### NetworkBase
 网络通信基类，包含数据发送和接收，以及socket套接字的关闭处理<br>
 方法:<br>
-`_recv_exact(n)`: 精确接收数据<br>
-`_send_raw(data)`: 发送原始数据包<br>
-`_recv_raw()`: 接收原始数据包<br>
-`close`: 关闭连接<br>
+- `_recv_exact(n)`: 精确接收数据<br>
+- `_send_raw(data)`: 发送原始数据包<br>
+- `_recv_raw()`: 接收原始数据包<br>
+- `close`: 关闭连接<br>
 
 ---
 
