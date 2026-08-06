@@ -38,21 +38,19 @@ pip install pycryptodome
 - 使用简单，代码简洁
 
 ## API
-`NetworkBase`: 网络通信基类，包含数据发送和接收，以及socket套接字的关闭处理
-
-方法:
-
-`_recv_exact(n)`: 精确接收数据
-`_send_raw(data)`: 发送原始数据包
-`_recv_raw()`: 接收原始数据包
-`close`: 关闭连接
+### NetworkBase
+网络通信基类，包含数据发送和接收，以及socket套接字的关闭处理<br>
+方法:<br>
+`_recv_exact(n)`: 精确接收数据<br>
+`_send_raw(data)`: 发送原始数据包<br>
+`_recv_raw()`: 接收原始数据包<br>
+`close`: 关闭连接<br>
 
 ---
 
-`Client`: 加密客户端
-
+### Client
+加密客户端
 方法:
-
 `connect()`: 连接服务器并完成握手
 `send(data)`: 加密数据并发送
 `receive()`: 接收数据并解密
@@ -60,18 +58,14 @@ pip install pycryptodome
 
 ---
 
-`Server`: 加密服务端
-
-方法:
-
-`accept()`: 接受连接并完成握手
-`send(data)`: 加密数据并发送
-`receive()`: 接收数据并解密
-`close`: 关闭连接
+`Server`: 加密服务端<br>
+方法:<br>
+`accept()`: 接受连接并完成握手<br>
+`send(data)`: 加密数据并发送<br>
+`receive()`: 接收数据并解密<br>
+`close`: 关闭连接<br>
 
 ## 加密方案
-密钥交换阶段：RSA 2048位
-
-数据加密：AES 256位 CBC
-
-填充模式：PKCS7
+密钥交换阶段：RSA 2048位<br>
+数据加密：AES 256位 CBC<br>
+填充模式：PKCS7<br>
