@@ -35,7 +35,7 @@ pip install pycryptodome
 - 端到端加密，RSA+AES混合加密。
 - 服务端和客户端强制加密，没有明文传输。
 - 自动握手。
-- 使用简单，代码简洁
+- 使用简单，代码简洁。
 
 ## API
 ### NetworkBase
@@ -70,3 +70,14 @@ pip install pycryptodome
 密钥交换阶段：RSA 2048位<br>
 数据加密：AES 256位 CBC<br>
 填充模式：PKCS7<br>
+
+## 项目结构
+```
+PyEndCrypt/
+├── README.md
+├── __init__.py
+├── base.py          # 网络通信基类
+├── crypto_utils.py  # 加密工具
+├── client.py        # 加密客户端
+└── server.py        # 加密服务器
+```
