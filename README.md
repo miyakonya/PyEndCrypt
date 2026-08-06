@@ -51,19 +51,20 @@ pip install pycryptodome
 ### Client
 加密客户端
 方法:
-`connect()`: 连接服务器并完成握手
-`send(data)`: 加密数据并发送
-`receive()`: 接收数据并解密
-`close`: 关闭连接
+- `connect()`: 连接服务器并完成握手
+- `send(data)`: 加密数据并发送
+- `receive()`: 接收数据并解密
+- `close`: 关闭连接
 
 ---
 
-`Server`: 加密服务端<br>
+### Server
+加密服务端<br>
 方法:<br>
-`accept()`: 接受连接并完成握手<br>
-`send(data)`: 加密数据并发送<br>
-`receive()`: 接收数据并解密<br>
-`close`: 关闭连接<br>
+- `accept()`: 接受连接并完成握手<br>
+- `send(data)`: 加密数据并发送<br>
+- `receive()`: 接收数据并解密<br>
+- `close`: 关闭连接<br>
 
 ## 加密方案
 密钥交换阶段：RSA 2048位<br>
