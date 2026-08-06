@@ -1,5 +1,3 @@
-from NetworkBase import NetworkBase
-
 # PyEndCrypt
 用Python写的端到端加密工具
 
@@ -41,7 +39,9 @@ pip install pycryptodome
 
 ## API
 `NetworkBase`: 网络通信基类，包含数据发送和接收，以及socket套接字的关闭处理
+
 方法:
+
 `_recv_exact(n)`: 精确接收数据
 `_send_raw(data)`: 发送原始数据包
 `_recv_raw()`: 接收原始数据包
@@ -50,7 +50,9 @@ pip install pycryptodome
 ---
 
 `Client`: 加密客户端
+
 方法:
+
 `connect()`: 连接服务器并完成握手
 `send(data)`: 加密数据并发送
 `receive()`: 接收数据并解密
@@ -59,7 +61,9 @@ pip install pycryptodome
 ---
 
 `Server`: 加密服务端
+
 方法:
+
 `accept()`: 接受连接并完成握手
 `send(data)`: 加密数据并发送
 `receive()`: 接收数据并解密
@@ -67,5 +71,7 @@ pip install pycryptodome
 
 ## 加密方案
 密钥交换阶段：RSA 2048位
+
 数据加密：AES 256位 CBC
+
 填充模式：PKCS7
