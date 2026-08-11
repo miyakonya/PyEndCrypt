@@ -9,10 +9,11 @@ class Client(NetworkBase):
     def __init__(self, host: str, port: int):
         super().__init__()
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.sock.settimeout(3)
+        self.sock.settimeout(300)
         self.host = host
         self.port = port
         self.aes_key = None
+        self.nonce = None
         self.handshake_done = False
 
     def _handshake(self):

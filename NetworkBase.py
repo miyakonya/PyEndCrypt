@@ -64,7 +64,7 @@ class NetworkBase:
             body = self._recv_exact(length)
             return body
         except BaseException as e:
-            raise ConnectionError(f"接收数据包失败{e}")
+            raise ConnectionError(f"接收数据包失败:{e}")
 
     def close(self):
         if self.sock:
