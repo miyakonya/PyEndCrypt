@@ -1,9 +1,10 @@
 # coding: UTF-8
 # Python 3.10.6
 # crypto_utils.py - 加密工具模块
-from Crypto.Cipher import AES, PKCS1_OAEP
-from Crypto.PublicKey import RSA
+from Crypto.Cipher import AES
 from Crypto.Random import get_random_bytes
+from ecies import encrypt, decrypt
+from ecies.keys import PrivateKey
 import struct
 import time
 
@@ -11,47 +12,31 @@ class CryptoUtils:
     TIMEOUT = 300   # 5分钟
     """加密工具类"""
     @staticmethod
-    def generate_rsa_keypair():
+    def generate_ecc_keypair():
         """
-        生成 RSA 密钥对
-        :return: RSA 密钥对
+        生成 ECC 密钥对
+        :return: ECC 密钥对
         """
-        key = RSA.generate(2048)
-        private_key = key.export_key()
-        public_key = key.publickey().export_key()
-        return private_key, public_key
+        sk = PrivateKey(curve="secp256k1")
+        return sk.to_hex(), sk.public_key.to_hex()
+
+    @staticmethod
+    def ecc_encrypt_aes_key(public_key_hex: str, aes_key: bytes) -> bytes:
+        """用服务器公钥加密 AES 密钥"""
+        return encrypt(public_key_hex, aes_key)
+
+    @staticmethod
+    def ecc_decrypt_aes_key(private_key_hex: str, encrypted_data: bytes) -> bytes:
+        """用私钥解密得到 AES 密钥"""
+        return decrypt(private_key_hex, encrypted_data)
 
     @staticmethod
     def generate_aes_key() -> bytes:
         """
         生成 AES 密钥
-        :return: 128位AES密钥
+        :return: 256位AES密钥
         """
-        return get_random_bytes(16)
-
-    @staticmethod
-    def rsa_encrypt(public_key: bytes, data: bytes) -> bytes:
-        """
-        使用 RSA 公钥加密数据
-        :param public_key: RSA 公钥
-        :param data: 原始数据
-        :return: 加密数据
-        """
-        rsa_key = RSA.import_key(public_key)
-        cipher = PKCS1_OAEP.new(rsa_key)
-        return cipher.encrypt(data)
-
-    @staticmethod
-    def rsa_decrypt(private_key: bytes, encrypted_data: bytes) -> bytes:
-        """
-        使用 RSA 私钥解密数据
-        :param private_key: RSA 私钥
-        :param encrypted_data: 加密数据
-        :return: 解密数据
-        """
-        rsa_key = RSA.import_key(private_key)
-        cipher = PKCS1_OAEP.new(rsa_key)
-        return cipher.decrypt(encrypted_data)
+        return get_random_bytes(32)
 
     @staticmethod
     def _pack_with_timestamp(data: bytes) -> bytes:
@@ -126,5 +111,7 @@ class CryptoUtils:
             timestamp, data = CryptoUtils._unpack_with_timestamp(cipher_text)
             if CryptoUtils._verify_time(timestamp):
                 return data
+            else:
+                raise Exception("解密失败")
         except BaseException as e:
             raise Exception("AES-GCM 认证失败，数据可能被篡改:", e)

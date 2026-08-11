@@ -8,16 +8,18 @@ from crypto_utils import CryptoUtils
 class Server(NetworkBase):
     def __init__(self, host: str, port: int):
         super().__init__()
-        self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.sock.bind((host, port))
-        self.sock.listen(1)
+        self.listen_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.listen_sock.bind((host, port))
+        self.listen_sock.listen(1)
         self.conn = None
         self.addr = None
         self.aes_key = None
         self.handshake_done = False
-        self.private_key, self.pub = CryptoUtils.generate_rsa_keypair()
+        self.private_key, self.pub = CryptoUtils.generate_ecc_keypair()
         print("服务器启动，等待客户端连接")
-        print("RSA 密钥对生成成功")
+        print("ECC 密钥对生成成功")
+        print(f"\t私钥:{len(self.private_key)}字节")
+        print(f"\t公钥:{len(self.pub)}字节")
 
     def _handshake(self):
         print("开始加密握手")
@@ -27,17 +29,18 @@ class Server(NetworkBase):
         if ekd is None:
             raise Exception("接收 AES 密钥失败")
         try:
-            self.aes_key = CryptoUtils.rsa_decrypt(self.private_key, ekd)
-            print("AES 密钥解密成功")
+            print("AES 密钥接收完毕")
+            self.aes_key = CryptoUtils.ecc_decrypt_aes_key(self.private_key, ekd)
+            print(f"AES 密钥解密成功，共{len(self.aes_key)}字节")
             self._send_raw(b"OK")
             self.handshake_done = True
             print("握手成功，加密通信建立")
-            print("="*20)
+            print("="*30)
         except BaseException as e:
             print("解密 AES 密钥失败:", e)
 
     def accept(self):
-        self.conn, self.addr = self.sock.accept()
+        self.conn, self.addr = self.listen_sock.accept()
         self.sock = self.conn
         print(f"{self.addr[0]}:{self.addr[1]} 连接到本服务器")
         self._handshake()

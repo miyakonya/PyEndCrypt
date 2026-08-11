@@ -19,13 +19,13 @@ class Client(NetworkBase):
     def _handshake(self):
         """建立加密连接"""
         print("开始加密握手")
-        pub = self._recv_raw()
+        pub = self._recv_raw().decode()
         if not pub:
             raise Exception("公钥接收失败")
         print(f"接收到服务器公钥，长度{len(pub)}字节")
         self.aes_key = CryptoUtils.generate_aes_key()
-        print("生成 AES 密钥")
-        eak = CryptoUtils.rsa_encrypt(pub, self.aes_key)
+        print(f"生成 AES 密钥，共{len(self.aes_key)}字节")
+        eak = CryptoUtils.ecc_encrypt_aes_key(pub, self.aes_key)
         print("发送加密的 AES 密钥")
         self._send_raw(eak)
         response = self._recv_raw()
