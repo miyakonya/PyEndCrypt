@@ -30,6 +30,7 @@ client.close()
 ## 依赖安装
 ```bash
 pip install pycryptodome
+pip install eciespy
 ```
 
 ## 特点
