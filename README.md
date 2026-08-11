@@ -48,6 +48,21 @@ pip install pycryptodome
 
 ---
 
+### crypto_untils
+加密工具类，所有加密和加密，以及密钥生成均在这里实现
+方法:
+- `generate_rsa_keypair()`: 生成 RSA 密钥对
+- `generate_aes_key()`: 生成 AES 密钥
+- `rsa_encrypt(public_key: bytes, data: bytes)`: 使用 RSA 公钥加密数据
+- `rsa_decrypt(private_key: bytes, encrypted_data: bytes)`: 使用 RSA 私钥解密数据
+- `_pack_with_timestamp(data: bytes)`: 将8位时间戳打包进数据中
+- `_unpack_with_timestamp(data: bytes)`: 解包数据
+- `_verify_time(timestamp, window=TIMEOUT)`: 时间戳校验
+- `aes_encrypt(aes_key: bytes, data: bytes)`: 使用 AES 私钥加密数据
+- `aes_decrypt(aes_key: bytes, data: bytes)`: 使用 AES 私钥解密数据
+
+---
+
 ### Client
 加密客户端
 方法:
