@@ -38,7 +38,8 @@ pip install eciespy
 - 服务端和客户端强制加密，没有明文传输。
 - 自动握手。
 - 使用简单，代码简洁。
-- 添加时间戳，防止重放攻击。
+- 添加时间戳和消息序列号，防止重放攻击。
+- 自动校验数据，保障安全性和完整性。
 
 ## API
 ### NetworkBase
@@ -58,9 +59,9 @@ pip install eciespy
 - `generate_aes_key()`: 生成 AES 密钥
 - `ecc_encrypt_aes_key(public_key_hex: str, aes_key: bytes)`: 使用 ECC 公钥加密数据
 - `ecc_decrypt_aes_key(private_key_hex: str, encrypted_data: bytes)`: 使用 ECC 私钥解密数据
-- `_pack_with_timestamp(data: bytes)`: 将8位时间戳打包进数据中
-- `_unpack_with_timestamp(data: bytes)`: 解包数据
-- `_verify_time(timestamp, window=TIMEOUT)`: 时间戳校验
+- `_pack(data: bytes, seq: int)`: 将8字节时间戳和4字节序列号打包进数据中
+- `_unpack(data: bytes)`: 解包数据
+- `_verify(timestamp: int, seq: int, data_seq: int, window=TIMEOUT)`: 数据校验
 - `aes_encrypt(aes_key: bytes, data: bytes)`: 使用 AES 私钥加密数据
 - `aes_decrypt(aes_key: bytes, data: bytes)`: 使用 AES 私钥解密数据
 

@@ -16,6 +16,7 @@ class Server(NetworkBase):
         self.aes_key = None
         self.handshake_done = False
         self.private_key, self.pub = CryptoUtils.generate_ecc_keypair()
+        self.seq = 1
         print("服务器启动，等待客户端连接")
         print("ECC 密钥对生成成功")
         print(f"\t私钥:{len(self.private_key)}字节")
@@ -30,7 +31,7 @@ class Server(NetworkBase):
             raise Exception("接收 AES 密钥失败")
         try:
             print("AES 密钥接收完毕")
-            self.aes_key = CryptoUtils.ecc_decrypt_aes_key(self.private_key, ekd)
+            self.aes_key = CryptoUtils.ecc_decrypt(self.private_key, ekd)
             print(f"AES 密钥解密成功，共{len(self.aes_key)}字节")
             self._send_raw(b"OK")
             self.handshake_done = True
@@ -54,15 +55,17 @@ class Server(NetworkBase):
             pass
         else:
             data = str(data).encode(self.encoding)
-        edata = CryptoUtils.aes_encrypt(self.aes_key, data)
+        edata = CryptoUtils.aes_encrypt(self.aes_key, data, self.seq)
         self._send_raw(edata)
+        self.seq += 1
 
     def receive(self):
         if not self.handshake_done or not self.aes_key:
             raise Exception("没有完成加密握手")
         raw_data = self._recv_raw()
         try:
-            data = CryptoUtils.aes_decrypt(self.aes_key, raw_data)
+            data = CryptoUtils.aes_decrypt(self.aes_key, raw_data, self.seq)
+            self.seq += 1
             return data.decode(self.encoding)
         except Exception as e:
             print("服务端发送了不正确的数据包:", e)
