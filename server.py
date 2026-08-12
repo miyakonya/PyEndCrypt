@@ -36,7 +36,7 @@ class Server(NetworkBase):
             self.handshake_done = True
             print("握手成功，加密通信建立")
             print("="*30)
-        except BaseException as e:
+        except Exception as e:
             print("解密 AES 密钥失败:", e)
 
     def accept(self):
@@ -46,7 +46,7 @@ class Server(NetworkBase):
         self._handshake()
 
     def send(self, data):
-        if not self.handshake_done:
+        if not self.handshake_done or not self.aes_key:
             raise Exception("没有完成加密握手")
         if isinstance(data, str):
             data = data.encode(self.encoding)
@@ -58,12 +58,12 @@ class Server(NetworkBase):
         self._send_raw(edata)
 
     def receive(self):
-        if not self.handshake_done:
+        if not self.handshake_done or not self.aes_key:
             raise Exception("没有完成加密握手")
         raw_data = self._recv_raw()
         try:
             data = CryptoUtils.aes_decrypt(self.aes_key, raw_data)
             return data.decode(self.encoding)
-        except BaseException as e:
+        except Exception as e:
             print("服务端发送了不正确的数据包:", e)
         
