@@ -1,5 +1,24 @@
 # PyEndCrypt
-用Python写的端到端加密工具
+用Python写的端到端加密工具，采用混合加密，对数据进行双重校验，使用简单，和平常使用socket套接字步骤差不多。
+
+## 特点
+- 端到端加密，ECC+AES混合加密。
+- 服务端和客户端强制加密，没有明文传输。
+- 自动握手。
+- 使用简单，代码简洁。
+- 时间戳和消息序列号双重校验，防止重放攻击。
+- 自动校验数据，保障安全性和完整性。
+- 可以根据API自行进行拓展。
+
+## 加密方案
+密钥交换阶段：ECC 256位<br>
+数据加密：AES-GCM 128位<br>
+
+## 依赖安装
+```bash
+pip install pycryptodome
+pip install eciespy
+```
 
 ## 快速开始
 服务端
@@ -26,20 +45,6 @@ print(data)
 client.send("Hello From Client")
 client.close()
 ```
-
-## 依赖安装
-```bash
-pip install pycryptodome
-pip install eciespy
-```
-
-## 特点
-- 端到端加密，ECC+AES混合加密。
-- 服务端和客户端强制加密，没有明文传输。
-- 自动握手。
-- 使用简单，代码简洁。
-- 添加时间戳和消息序列号，防止重放攻击。
-- 自动校验数据，保障安全性和完整性。
 
 ## API
 ### NetworkBase
@@ -73,7 +78,7 @@ pip install eciespy
 - `connect()`: 连接服务器并完成握手
 - `send(data)`: 加密数据并发送
 - `receive()`: 接收数据并解密
-- `close`: 关闭连接
+- `close()`: 关闭连接
 
 ---
 
@@ -83,11 +88,7 @@ pip install eciespy
 - `accept()`: 接受连接并完成握手
 - `send(data)`: 加密数据并发送
 - `receive()`: 接收数据并解密
-- `close`: 关闭连接
-
-## 加密方案
-密钥交换阶段：ECC 256位<br>
-数据加密：AES 128位 GCM<br>
+- `close()`: 关闭连接
 
 ## 项目结构
 ```
