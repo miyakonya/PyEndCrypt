@@ -1,12 +1,18 @@
 # encoding: UTF-8
 # Python 3.10.6
 
+"""
+Copyright (c) 2026 super cat
+This source code is licensed under the MIT license found in the
+LICENSE file in the root directory of this source tree.
+"""
+
 import socket
 from NetworkBase import NetworkBase
 from crypto_utils import CryptoUtils
 
 class Server(NetworkBase):
-    def __init__(self, host: str, port: int):
+    def __init__(self, host: str, port: int, is_padding: bool = False, encoding: str = "utf-8"):
         super().__init__()
         self.listen_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.listen_sock.bind((host, port))
@@ -15,8 +21,10 @@ class Server(NetworkBase):
         self.addr = None
         self.aes_key = None
         self.handshake_done = False
+        self.is_padding = is_padding
         self.private_key, self.pub = CryptoUtils.generate_ecc_keypair()
         self.seq = 1
+        self.encoding = encoding
         print("服务器启动，等待客户端连接")
         print("ECC 密钥对生成成功")
         print(f"\t私钥:{len(self.private_key)}字节")
@@ -33,10 +41,14 @@ class Server(NetworkBase):
             print("AES 密钥接收完毕")
             self.aes_key = CryptoUtils.ecc_decrypt(self.private_key, ekd)
             print(f"AES 密钥解密成功，共{len(self.aes_key)}字节")
-            self._send_raw(b"OK")
-            self.handshake_done = True
-            print("握手成功，加密通信建立")
-            print("="*30)
+            response = self._recv_raw()
+            if response == b"Client Hello":
+                self._send_raw(b"Server Hello")
+                self.handshake_done = True
+                print("握手成功，加密通信建立")
+                print("="*30)
+            else:
+                raise Exception("握手失败")
         except Exception as e:
             print("解密 AES 密钥失败:", e)
 

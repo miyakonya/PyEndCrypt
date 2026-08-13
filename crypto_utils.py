@@ -1,6 +1,12 @@
 # coding: UTF-8
 # Python 3.10.6
 
+"""
+Copyright (c) 2026 super cat
+This source code is licensed under the MIT license found in the
+LICENSE file in the root directory of this source tree.
+"""
+
 from Crypto.Cipher import AES
 from Crypto.Random import get_random_bytes
 from ecies import encrypt, decrypt

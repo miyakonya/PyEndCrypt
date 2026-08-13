@@ -1,12 +1,18 @@
 # encoding: UTF-8
 # Python 3.10.6
 
+"""
+Copyright (c) 2026 super cat
+This source code is licensed under the MIT license found in the
+LICENSE file in the root directory of this source tree.
+"""
+
 import socket
 from NetworkBase import NetworkBase
 from crypto_utils import CryptoUtils
 
 class Client(NetworkBase):
-    def __init__(self, host: str, port: int):
+    def __init__(self, host: str, port: int, is_padding: bool = False, encoding: str = "utf-8"):
         super().__init__()
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.sock.settimeout(300)
@@ -16,6 +22,8 @@ class Client(NetworkBase):
         self.nonce = None
         self.handshake_done = False
         self.seq = 1
+        self.is_padding = is_padding
+        self.encoding = encoding
 
     def _handshake(self):
         """建立加密连接"""
@@ -29,8 +37,9 @@ class Client(NetworkBase):
         eak = CryptoUtils.ecc_encrypt(pub, self.aes_key)
         print("发送加密的 AES 密钥")
         self._send_raw(eak)
+        self._send_raw(b"Client Hello")
         response = self._recv_raw()
-        if response == b"OK":
+        if response == b"Server Hello":
             self.handshake_done = True
             print("握手成功，加密通信建立")
             print("=" * 30)
