@@ -15,10 +15,17 @@ from Crypto.Hash import HMAC, SHA256
 import gc
 
 class Client(NetworkBase):
-    def __init__(self, host: str, port: int, key_file: str, is_padding: bool = False, encoding: str = "utf-8"):
-        super().__init__()
+    def __init__(self, host: str,
+                 port: int,
+                 key_file: str,
+                 certfile: str,
+                 ssl_key: str,
+                 is_padding: bool = False,
+                 encoding: str = "utf-8"):
+        super().__init__(certfile, ssl_key, is_server=False)
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.sock.settimeout(300)
+        self.ssl_sock = self.context.wrap_socket(self.sock, server_hostname=host)
+        self.ssl_sock.settimeout(300)
         self.host = host
         self.port = port
         self.aes_key = None
@@ -96,7 +103,7 @@ class Client(NetworkBase):
             raise Exception("握手失败")
 
     def connect(self):
-        self.sock.connect((self.host, self.port))
+        self.ssl_sock.connect((self.host, self.port))
         print("连接成功")
         self._auth()
         self._handshake()
@@ -132,3 +139,5 @@ class Client(NetworkBase):
         ba[:] = b"\x00" * len(ba)
         del ba
         self.aes_key = None
+        gc.collect()
+        gc.collect()

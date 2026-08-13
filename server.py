@@ -14,11 +14,18 @@ from Crypto.Hash import HMAC, SHA256
 import gc
 
 class Server(NetworkBase):
-    def __init__(self, host: str, port: int, key_file: str, is_padding: bool = False, encoding: str = "utf-8"):
-        super().__init__()
+    def __init__(self, host: str,
+                 port: int,
+                 key_file: str,
+                 certfile: str,
+                 ssl_key: str,
+                 is_padding: bool = False,
+                 encoding: str = "utf-8"):
+        super().__init__(certfile, ssl_key, is_server = True)
         self.listen_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.listen_sock.bind((host, port))
         self.listen_sock.listen(1)
+        self.ssl_sock = self.context.wrap_socket(self.listen_sock, server_side=True)
         self.conn = None
         self.addr = None
         self.aes_key = None
@@ -105,8 +112,8 @@ class Server(NetworkBase):
 
     def accept(self):
         print("服务器启动，等待客户端连接")
-        self.conn, self.addr = self.listen_sock.accept()
-        self.sock = self.conn
+        self.conn, self.addr = self.ssl_sock.accept()
+        self.ssl_sock = self.conn
         print(f"{self.addr[0]}:{self.addr[1]} 连接到本服务器")
         self._auth()
         self._handshake()
@@ -141,3 +148,5 @@ class Server(NetworkBase):
         ba[:] = b"\x00" * len(ba)
         del ba
         self.aes_key = None
+        gc.collect()
+        gc.collect()

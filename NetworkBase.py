@@ -13,14 +13,23 @@ LICENSE file in the root directory of this source tree.
 
 import struct
 from Crypto.Random import get_random_bytes
+import ssl
 
 class NetworkBase:
-    def __init__(self):
+    def __init__(self, certfile: str, ssl_key: str, is_server: bool):
         self.encoding = "utf-8"
-        self.sock = None
+        self.ssl_sock = None
         self.MAX_SIZE = 1024 * 1024 # 最大包大小为1MB
         self.is_padding = False # 是否启用数据包填充
         self.padding_size = 128 # 设定填充块大小为128字节
+        self.is_server = is_server
+        if self.is_server:
+            self.context = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
+        else:
+            self.context = ssl.create_default_context(ssl.Purpose.SERVER_AUTH)
+        self.context.load_cert_chain(certfile=certfile, keyfile=ssl_key)
+        self.context.minimum_version = ssl.TLSVersion.TLSv1_3
+        self.context.maximum_version = ssl.TLSVersion.TLSv1_3
 
     def _recv_exact(self, n: int) -> bytes:
         """
@@ -31,11 +40,11 @@ class NetworkBase:
         if n > self.MAX_SIZE:
             raise ConnectionError("接收到了过大的数据包！")
 
-        if not self.sock:
+        if not self.ssl_sock:
             raise ConnectionError("Socket没有初始化")
         data = b''
         while (len(data)) < n:
-            chunk = self.sock.recv(n - len(data))
+            chunk = self.ssl_sock.recv(n - len(data))
             if not chunk:
                 raise ConnectionError("连接已断开")
             data += chunk
@@ -77,7 +86,7 @@ class NetworkBase:
         :param data:要发送的数据
         :return: 无
         """
-        if not self.sock:
+        if not self.ssl_sock:
             raise ConnectionError("Socket没有初始化")
         if isinstance(data, str):
             data = data.encode(self.encoding)
@@ -91,18 +100,18 @@ class NetworkBase:
             raise ConnectionError("发送的数据包太大！")
         if self.is_padding:
             padded_data = self._add_padding(data)
-            self.sock.sendall(padded_data)
+            self.ssl_sock.sendall(padded_data)
         else:
             header = struct.pack("!I", length)
-            self.sock.sendall(header)
-            self.sock.sendall(data)
+            self.ssl_sock.sendall(header)
+            self.ssl_sock.sendall(data)
 
     def _recv_raw(self) -> bytes:
         """
         接收数据
         :return: 接收到的数据
         """
-        if not self.sock:
+        if not self.ssl_sock:
             raise ConnectionError("Socket没有初始化")
         try:
             if self.is_padding:
@@ -124,6 +133,6 @@ class NetworkBase:
             raise ConnectionError(f"接收数据包失败:{e}")
 
     def close(self):
-        if self.sock:
-            self.sock.close()
-            self.sock = None
+        if self.ssl_sock:
+            self.ssl_sock.close()
+            self.ssl_sock = None
