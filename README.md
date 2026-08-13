@@ -4,13 +4,16 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 ## 特点
-- 端到端加密，ECC+AES混合加密。
+- 端到端加密，ECC + AES 混合加密。
 - 服务端和客户端强制加密，没有明文传输。
 - 自动握手。
 - 使用简单，代码简洁。
 - 时间戳和消息序列号双重校验，防止重放攻击。
 - 自动校验数据，保障安全性和完整性。
 - 可以根据API自行进行拓展。
+- 支持数据包大小伪造。
+- 自动从内存中销毁密钥数据。
+- 使用预共享双向认证，加密前使用 PSK 密钥认证，杜绝中间人攻击。
 
 ## 加密方案
 密钥交换阶段：ECC 256位<br>
@@ -27,7 +30,8 @@ pip install eciespy
 ```python
 from server import Server
 
-server = Server("127.0.0.1", 5555)
+key_file = ""   # PSK 密钥文件路径
+server = Server("127.0.0.1", 5555, key_file)
 server.accept()
 server.send("Hello From Server")
 data = server.receive()
@@ -40,12 +44,20 @@ server.close()
 ```python
 from client import Client
 
-client = Client("127.0.0.1", 5555)
+key_file = ""   # PSK 密钥文件路径
+client = Client("127.0.0.1", 5555, key_file)
 client.connect()
 data = client.receive()
 print(data)
 client.send("Hello From Client")
 client.close()
+```
+
+PSK 密钥生成
+```python
+import secrets
+
+key = secrets.token_bytes(32)
 ```
 
 ## API
@@ -77,6 +89,10 @@ client.close()
 ### Client
 加密客户端<br>
 方法:
+- `Client(host: str, port: int, is_padding: bool = False, encoding: str = "utf-8")`: 创建客户端
+- `_destroyer()`: 从内存中销毁密钥
+- `_auth()`: 进行 PSK 密钥认证
+- `_handshake()`: 建立加密握手
 - `connect()`: 连接服务器并完成握手
 - `send(data)`: 加密数据并发送
 - `receive()`: 接收数据并解密
@@ -87,6 +103,10 @@ client.close()
 ### Server
 加密服务端<br>
 方法:
+- `Server(host: str, port: int, is_padding: bool = False, encoding: str = "utf-8")`: 创建服务端
+- `_destroyer()`: 从内存中销毁密钥
+- `_auth()`: 进行 PSK 密钥认证
+- `_handshake()`: 建立加密握手
 - `accept()`: 接受连接并完成握手
 - `send(data)`: 加密数据并发送
 - `receive()`: 接收数据并解密
@@ -109,6 +129,7 @@ PyEndCrypt/
 - 🔴 添加客户端身份验证
 - 🟡 增加心跳机制
 - 🟡 添加客户端自动重连
-- 🟡 将`print()`替换位日志记录系统
+- 🟡 将`print()`替换为日志记录系统
+- 🟡 添加配置文件系统
 - 🟢 做一个简易的，基于`Websocket`的Web聊天室
 - 🟢 优化异常处理
