@@ -103,7 +103,6 @@ client.close()
 方法:
 - `Client(host: str, port: int, is_padding: bool = False, encoding: str = "utf-8")`: 创建客户端
 - `_destroyer()`: 从内存中销毁密钥
-- `_auth()`: 进行 PSK 密钥认证
 - `_handshake()`: 建立加密握手
 - `connect()`: 连接服务器并完成握手
 - `send(data)`: 加密数据并发送
@@ -117,7 +116,6 @@ client.close()
 方法:
 - `Server(host: str, port: int, is_padding: bool = False, encoding: str = "utf-8")`: 创建服务端
 - `_destroyer()`: 从内存中销毁密钥
-- `_auth()`: 进行 PSK 密钥认证
 - `_handshake()`: 建立加密握手
 - `accept()`: 接受连接并完成握手
 - `send(data)`: 加密数据并发送
@@ -137,8 +135,8 @@ PyEndCrypt/
 ## 工作清单
 如果你想参与开发，可以依据这个清单改进(颜色代表优先级)
 
-- 🔴 实现服务器公钥指纹验证
-- 🔴 添加客户端身份验证
+- ⚪️ ~~实现服务器公钥指纹验证~~（已由TLS和mTLS替代）
+- ⚪️ ~~添加客户端身份验证~~（已由TLS和mTLS替代）
 - 🟡 增加心跳机制
 - 🟡 添加客户端自动重连
 - 🟡 将`print()`替换为日志记录系统
