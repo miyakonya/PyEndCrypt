@@ -13,7 +13,8 @@
 - 可以根据API自行进行拓展。
 - 支持数据包大小伪造。
 - 自动从内存中销毁密钥数据。
-- 使用预共享双向认证，加密前使用 PSK 密钥认证，杜绝中间人攻击。
+- 使用mTLS认证，保护服务端和客户端，杜绝中间人攻击。
+- 采用TLS加密传输层，保障传输层安全。
 
 ## 加密方案
 密钥交换阶段：ECC 256位<br>
@@ -30,8 +31,17 @@ pip install eciespy
 ```python
 from server import Server
 
-key_file = ""   # PSK 密钥文件路径
-server = Server("127.0.0.1", 5555, key_file)
+crt = "" # 服务端证书路径
+key = "" # 服务端密钥路径
+ca_crt = "" # CA证书路径
+padding = False # 是否开启数据包大小伪造
+
+server = Server("127.0.0.1",
+                  5555,
+                  crt,
+                  key,
+                  ca_crt,
+                  padding)
 server.accept()
 server.send("Hello From Server")
 data = server.receive()
@@ -44,20 +54,22 @@ server.close()
 ```python
 from client import Client
 
-key_file = ""   # PSK 密钥文件路径
-client = Client("127.0.0.1", 5555, key_file)
+crt = "" # 客户端证书路径
+key = "" # 客户端密钥路径
+ca_crt = "" # CA证书路径
+padding = False # 是否开启数据包大小伪造
+
+client = Client("127.0.0.1",
+                  5555,
+                  crt,
+                  key,
+                  ca_crt,
+                  padding)
 client.connect()
 data = client.receive()
 print(data)
 client.send("Hello From Client")
 client.close()
-```
-
-PSK 密钥生成
-```python
-import secrets
-
-key = secrets.token_bytes(32)
 ```
 
 ## API

@@ -10,18 +10,22 @@ LICENSE file in the root directory of this source tree.
 import socket
 from NetworkBase import NetworkBase
 from crypto_utils import CryptoUtils
-from Crypto.Hash import HMAC, SHA256
 import gc
 
 class Server(NetworkBase):
     def __init__(self, host: str,
                  port: int,
-                 key_file: str,
                  certfile: str,
                  ssl_key: str,
+                 ca_file:str,
                  is_padding: bool = False,
                  encoding: str = "utf-8"):
-        super().__init__(certfile, ssl_key, is_server = True)
+        super().__init__(certfile,
+                         ssl_key,
+                         True,
+                         ca_file,
+                         is_padding,
+                         encoding)
         self.listen_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.listen_sock.bind((host, port))
         self.listen_sock.listen(1)
@@ -30,61 +34,25 @@ class Server(NetworkBase):
         self.addr = None
         self.aes_key = None
         self.handshake_done = False
-        self.is_padding = is_padding
         self.private_key, self.pub = CryptoUtils.generate_ecc_keypair()
         self.seq = 1
         self.encoding = encoding
-        self.shared_key = None
-        self.key_file = key_file
-        try:
-            with open(key_file, "rb") as r:
-                self.shared_key = bytearray(r.read())
-        except Exception as e:
-            raise Exception("读取 PSK 密钥文件失败:", e)
-        if self.shared_key:
-            print(f"PSK 密钥读取完毕，共{len(self.shared_key)}字节")
-        else:
-            raise Exception("PSK 密钥读取失败")
         print("ECC 密钥对生成成功")
         print(f"\t私钥:{len(self.private_key)}字节")
         print(f"\t公钥:{len(self.pub)}字节")
 
     def _destroyer(self):
-        """从内存中销毁 PSK 密钥和 RSA 密钥"""
-        if hasattr(self, "shared_key") and self.shared_key is not None:
-            self.shared_key[:] = b"\x00" * len(self.shared_key)
-            self.shared_key = None
-            print("PSK 密钥已从内存中销毁")
-        for key_name in ["pub", "private_key"]:
-            if hasattr(self, key_name):
-                key = getattr(self, key_name)
-                if key is not None:
-                    ba = bytearray(key.encode(self.encoding))
-                    ba[:] = b"\x00" * len(ba)
-                    del ba, key
-                    setattr(self, key_name, None)
-        gc.collect()
-        gc.collect()
-        print("ECC 密钥已全部从内存中销毁")
-
-    def _auth(self):
-        """进行 PSK 密钥认证"""
-        if not self.shared_key:
-            raise Exception("PSK 密钥读取失败")
-        print("开始进行 PSK 密钥认证")
-        message = self._recv_raw()
-        print("接收到客户端消息")
-        client_signature = self._recv_raw()
-        print("接收到客户端签名")
-        hmac_obj = HMAC.new(self.shared_key, digestmod=SHA256)
-        hmac_obj.update(message)
-        try:
-            hmac_obj.verify(client_signature)
-            print("PSK 密钥认证通过!")
-            self._send_raw(b"OK")
-        except ValueError:
-            raise ValueError("PSK 密钥认证失败！")
-
+        """从内存中销毁 ECC 密钥对"""
+        if hasattr(self, "private_key") and self.private_key:
+            ba = bytearray(self.private_key.encode())
+            ba[:] = b"\x00" * len(ba)
+            del ba
+            self.private_key = None
+        if hasattr(self, "pub") and self.pub:
+            bap = bytearray(self.pub.encode())
+            bap[:] = b"\x00" * len(bap)
+            del bap
+            self.pub = None
 
     def _handshake(self):
         """加密握手实现"""
@@ -102,7 +70,7 @@ class Server(NetworkBase):
             if response == b"Client Hello":
                 self._send_raw(b"Server Hello")
                 self.handshake_done = True
-                self._destroyer()
+                self._destroyer()  # 从内存中销毁密钥
                 print("握手成功，加密通信建立")
                 print("="*30)
             else:
@@ -115,7 +83,6 @@ class Server(NetworkBase):
         self.conn, self.addr = self.ssl_sock.accept()
         self.ssl_sock = self.conn
         print(f"{self.addr[0]}:{self.addr[1]} 连接到本服务器")
-        self._auth()
         self._handshake()
 
     def send(self, data):
@@ -143,10 +110,13 @@ class Server(NetworkBase):
             print("服务端发送了不正确的数据包:", e)
 
     def close(self):
+        """销毁 AES 密钥"""
         super().close()
-        ba = bytearray(self.aes_key)
-        ba[:] = b"\x00" * len(ba)
-        del ba
-        self.aes_key = None
+        if self.aes_key:
+            ba = bytearray(self.aes_key)
+            ba[:] = b"\x00" * len(ba)
+            del ba
+            self.aes_key = None
+        self.seq = 0
         gc.collect()
         gc.collect()

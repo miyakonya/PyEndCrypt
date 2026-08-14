@@ -16,19 +16,27 @@ from Crypto.Random import get_random_bytes
 import ssl
 
 class NetworkBase:
-    def __init__(self, certfile: str, ssl_key: str, is_server: bool):
-        self.encoding = "utf-8"
+    def __init__(self, certfile: str,
+                 ssl_key: str,
+                 is_server: bool,
+                 ca_file: str,
+                 is_padding: bool,
+                 encoding: str):
+        self.encoding = encoding
         self.ssl_sock = None
         self.MAX_SIZE = 1024 * 1024 # 最大包大小为1MB
-        self.is_padding = False # 是否启用数据包填充
+        self.is_padding = is_padding # 是否启用数据包填充
         self.padding_size = 128 # 设定填充块大小为128字节
         self.is_server = is_server
         if self.is_server:
             self.context = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
         else:
             self.context = ssl.create_default_context(ssl.Purpose.SERVER_AUTH)
-        self.context.load_cert_chain(certfile=certfile, keyfile=ssl_key)
-        self.context.minimum_version = ssl.TLSVersion.TLSv1_3
+            self.context.check_hostname = False
+        self.context.load_cert_chain(certfile=certfile, keyfile=ssl_key)    # 加载自己的证书
+        self.context.load_verify_locations(cafile=ca_file)  # 加载 CA 证书
+        self.context.verify_mode = ssl.CERT_REQUIRED
+        self.context.minimum_version = ssl.TLSVersion.TLSv1_2
         self.context.maximum_version = ssl.TLSVersion.TLSv1_3
 
     def _recv_exact(self, n: int) -> bytes:

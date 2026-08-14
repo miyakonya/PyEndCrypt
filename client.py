@@ -11,20 +11,25 @@ import socket
 
 from NetworkBase import NetworkBase
 from crypto_utils import CryptoUtils
-from Crypto.Hash import HMAC, SHA256
 import gc
 
 class Client(NetworkBase):
     def __init__(self, host: str,
                  port: int,
-                 key_file: str,
                  certfile: str,
                  ssl_key: str,
+                 ca_file:str,
                  is_padding: bool = False,
                  encoding: str = "utf-8"):
-        super().__init__(certfile, ssl_key, is_server=False)
-        self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.ssl_sock = self.context.wrap_socket(self.sock, server_hostname=host)
+        super().__init__(certfile,
+                         ssl_key,
+                         False,
+                         ca_file,
+                         is_padding,
+                         encoding)
+        self.ssl_sock = self.context.wrap_socket(
+            socket.socket(socket.AF_INET, socket.SOCK_STREAM),
+            server_hostname=host)
         self.ssl_sock.settimeout(300)
         self.host = host
         self.port = port
@@ -34,51 +39,15 @@ class Client(NetworkBase):
         self.seq = 1
         self.is_padding = is_padding
         self.encoding = encoding
-        self.shared_key = None
         self.pub = None
-        self.key_file = key_file
-        try:
-            with open(self.key_file, "rb") as r:
-                self.shared_key = bytearray(r.read())
-        except FileNotFoundError:
-            raise FileNotFoundError("没有找到 PSK 密钥文件")
-        if self.shared_key:
-            print(f"PSK 密钥读取完毕，共{len(self.shared_key)}字节")
-        else:
-            raise Exception("PSK 密钥读取失败")
 
     def _destroyer(self):
-        """从内存中销毁 PSK 密钥和 RSA 密钥"""
-        if hasattr(self, "shared_key") and self.shared_key is not None:
-            self.shared_key[:] = b"\x00" * len(self.shared_key)
-            self.shared_key = None
-            print("PSK 密钥已从内存中销毁")
-        if hasattr(self, "pub"):
-            key = getattr(self, "pub")
-            if key is not None:
-                ba = bytearray(key.encode(self.encoding))
-                ba[:] = b"\x00" * len(ba)
-                del ba, key
-                setattr(self, "pub", None)
-        gc.collect()
-        gc.collect()
-        print("ECC 密钥已全部从内存中销毁")
-
-    def _auth(self):
-        if not self.shared_key:
-            raise Exception("PSK 密钥读取失败")
-        hmac_obj = HMAC.new(self.shared_key, digestmod=SHA256)
-        hmac_obj.update(b"Client Hello")
-        client_signature = hmac_obj.digest()
-        print("认证消息签名完毕，发送给服务端")
-        self._send_raw(b"Client Hello")
-        self._send_raw(client_signature)
-        print("发送完毕")
-        response = self._recv_raw()
-        if response == b"OK":
-            print("PSK 密钥认证通过!")
-        else:
-            raise Exception("PSK 密钥认证失败！")
+        """从内存中销毁 ECC 公钥"""
+        if hasattr(self, "pub") and self.pub:
+            bap = bytearray(self.pub.encode())
+            bap[:] = b"\x00" * len(bap)
+            del bap
+            self.pub = None
 
     def _handshake(self):
         """建立加密连接"""
@@ -96,7 +65,7 @@ class Client(NetworkBase):
         response = self._recv_raw()
         if response == b"Server Hello":
             self.handshake_done = True
-            self._destroyer()
+            self._destroyer()  # 从内存中销毁密钥
             print("握手成功，加密通信建立")
             print("=" * 30)
         else:
@@ -105,7 +74,6 @@ class Client(NetworkBase):
     def connect(self):
         self.ssl_sock.connect((self.host, self.port))
         print("连接成功")
-        self._auth()
         self._handshake()
 
     def send(self, data):
@@ -134,10 +102,13 @@ class Client(NetworkBase):
             print("服务端发送了不正确的数据包:", e)
 
     def close(self):
+        """销毁 AES 密钥"""
         super().close()
-        ba = bytearray(self.aes_key)
-        ba[:] = b"\x00" * len(ba)
-        del ba
-        self.aes_key = None
+        if self.aes_key:
+            ba = bytearray(self.aes_key)
+            ba[:] = b"\x00" * len(ba)
+            del ba
+            self.aes_key = None
+        self.seq = 0
         gc.collect()
         gc.collect()
