@@ -48,6 +48,8 @@ class Client(NetworkBase):
             bap[:] = b"\x00" * len(bap)
             del bap
             self.pub = None
+        gc.collect()
+        gc.collect()
 
     def _handshake(self):
         """建立加密连接"""
