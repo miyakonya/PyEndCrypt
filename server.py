@@ -20,6 +20,16 @@ class Server(NetworkBase):
                  ca_file:str,
                  is_padding: bool = False,
                  encoding: str = "utf-8"):
+        """
+        创建服务端
+        :param host: 主机
+        :param port: 端口
+        :param certfile: 服务端证书文件
+        :param ssl_key: 服务端私钥文件
+        :param ca_file: CA证书文件
+        :param is_padding: 是否开启数据包填充
+        :param encoding: 编码格式
+        """
         super().__init__(certfile,
                          ssl_key,
                          True,
@@ -34,45 +44,34 @@ class Server(NetworkBase):
         self.addr = None
         self.aes_key = None
         self.handshake_done = False
-        self.private_key, self.pub = CryptoUtils.generate_ecc_keypair()
         self.seq = 1
         self.encoding = encoding
-        print("ECC 密钥对生成成功")
-        print(f"\t私钥:{len(self.private_key)}字节")
-        print(f"\t公钥:{len(self.pub)}字节")
-
-    def _destroyer(self):
-        """从内存中销毁 ECC 密钥对"""
-        if hasattr(self, "private_key") and self.private_key:
-            ba = bytearray(self.private_key.encode())
-            ba[:] = b"\x00" * len(ba)
-            del ba
-            self.private_key = None
-        if hasattr(self, "pub") and self.pub:
-            bap = bytearray(self.pub.encode())
-            bap[:] = b"\x00" * len(bap)
-            del bap
-            self.pub = None
-        gc.collect()
-        gc.collect()
 
     def _handshake(self):
         """加密握手实现"""
         print("开始加密握手")
-        self._send_raw(self.pub)
-        print("公钥已发送")
-        ekd = self._recv_raw()
-        if ekd is None:
-            raise Exception("接收 AES 密钥失败")
+        # 每次连接单独生成新的临时公私钥
+        private_key, public_key = CryptoUtils.generate_x25519_keypair()
+        client_public_bytes = self._recv_raw()
+        if not client_public_bytes or len(client_public_bytes) != 32:
+            raise Exception("接收客户端临时公钥失败")
         try:
-            print("AES 密钥接收完毕")
-            self.aes_key = CryptoUtils.ecc_decrypt(self.private_key, ekd)
-            print(f"AES 密钥解密成功，共{len(self.aes_key)}字节")
+            print(f"接收到客户端临时公钥，长度{len(client_public_bytes)}字节")
+            self._send_raw(public_key)
+            print("发送临时公钥给客户端")
+            # 根据临时私钥和客户端公钥派生出共享密钥
+            shared_key = CryptoUtils.x25519_derive_shared_key(
+                private_key,
+                client_public_bytes
+            )
+            # 根据公钥密钥派生出 AES 密钥
+            self.aes_key = CryptoUtils.shared_key_derive_aes_key(shared_key)
+            print(f"AES 密钥派生成功，共{len(self.aes_key)}字节")
+            del private_key
             response = self._recv_raw()
             if response == b"Client Hello":
                 self._send_raw(b"Server Hello")
                 self.handshake_done = True
-                self._destroyer()  # 从内存中销毁密钥
                 print("握手成功，加密通信建立")
                 print("="*30)
             else:

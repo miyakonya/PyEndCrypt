@@ -9,8 +9,10 @@ LICENSE file in the root directory of this source tree.
 
 from Crypto.Cipher import AES
 from Crypto.Random import get_random_bytes
-from ecies import encrypt, decrypt
-from ecies.keys import PrivateKey
+from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey, X25519PublicKey
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.kdf.hkdf import HKDF
+from cryptography.hazmat.backends import default_backend
 import struct
 import time
 
@@ -18,31 +20,38 @@ class CryptoUtils:
     """加密工具类，所有的加密和解密逻辑都在这里"""
     TIMEOUT = 300   # 5分钟
     @staticmethod
-    def generate_ecc_keypair():
+    def generate_x25519_keypair():
         """
-        生成 ECC 密钥对
-        :return: ECC 密钥对
+        生成 x25519 临时密钥对
+        :return: x25519 密钥对
         """
-        sk = PrivateKey(curve="secp256k1")
-        return sk.to_hex(), sk.public_key.to_hex()
+        private_key = X25519PrivateKey.generate()
+        public_key = private_key.public_key()
+        public_bytes = public_key.public_bytes(
+            encoding=serialization.Encoding.Raw,
+            format=serialization.PublicFormat.Raw
+        )
+        return private_key, public_bytes
+    
+    @staticmethod
+    def x25519_derive_shared_key(private_key: X25519PrivateKey, peer_public_bytes: bytes) -> bytes:
+        """用 X25519 密钥派生出共享密钥"""
+        peer_public = X25519PublicKey.from_public_bytes(peer_public_bytes)
+        shared_key = private_key.exchange(peer_public)
+        return shared_key
 
     @staticmethod
-    def ecc_encrypt(public_key_hex: str, aes_key: bytes) -> bytes:
-        """用服务器公钥加密 AES 密钥"""
-        return encrypt(public_key_hex, aes_key)
-
-    @staticmethod
-    def ecc_decrypt(private_key_hex: str, encrypted_data: bytes) -> bytes:
-        """用私钥解密得到 AES 密钥"""
-        return decrypt(private_key_hex, encrypted_data)
-
-    @staticmethod
-    def generate_aes_key() -> bytes:
-        """
-        生成 AES 密钥
-        :return: 256位AES密钥
-        """
-        return get_random_bytes(32)
+    def shared_key_derive_aes_key(shared_key: bytes) -> bytes:
+        """从共享密钥中派生出 AES 密钥"""
+        salt = b'E\xf6VL\xb2\x1fF\xcct\xf9\xfc\xeb\xa9\x17DX~\xf9\x12\x0cb>\xf9\x953\xb3\x16\x06h\xa5j\xe4'
+        hkdf = HKDF(
+            algorithm=hashes.SHA256(), 
+            length=32, 
+            salt=salt, 
+            info=b"aes_key", 
+            backend=default_backend()
+        )
+        return hkdf.derive(shared_key)
 
     @staticmethod
     def _pack(data: bytes, seq: int) -> bytes:

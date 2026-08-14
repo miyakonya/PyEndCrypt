@@ -4,7 +4,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 ## 特点
-- 端到端加密，ECC + AES 混合加密。
+- 端到端加密，X25519 + AES 混合加密。
 - 服务端和客户端强制加密，没有明文传输。
 - 自动握手。
 - 使用简单，代码简洁。
@@ -17,7 +17,7 @@
 - 采用TLS加密传输层，保障传输层安全。
 
 ## 加密方案
-密钥交换阶段：ECC 256位<br>
+密钥交换阶段：X25519 256位<br>
 数据加密：AES-GCM 128位<br>
 
 ## 依赖安装
@@ -86,10 +86,9 @@ client.close()
 ### crypto_untils
 加密工具类，所有加密和加密，以及密钥生成均在这里实现<br>
 方法:
-- `generate_ecc_keypair()`: 生成 ECC 密钥对
-- `generate_aes_key()`: 生成 AES 密钥
-- `ecc_encrypt_aes_key(public_key_hex: str, aes_key: bytes)`: 使用 ECC 公钥加密数据
-- `ecc_decrypt_aes_key(private_key_hex: str, encrypted_data: bytes)`: 使用 ECC 私钥解密数据
+- `generate_x25519_keypair()`: 生成 X25519 临时密钥对
+- `x25519_derive_shared_key(private_key: X25519PrivateKey, peer_public_bytes: bytes)`: 用 X25519 密钥派生出共享密钥
+- `shared_key_derive_aes_key(shared_key: bytes)`: 从共享密钥中派生出 AES 密钥
 - `_pack(data: bytes, seq: int)`: 将8字节时间戳和4字节序列号打包进数据中
 - `_unpack(data: bytes)`: 解包数据
 - `_verify(timestamp: int, seq: int, data_seq: int, window=TIMEOUT)`: 数据校验
@@ -101,7 +100,7 @@ client.close()
 ### Client
 加密客户端<br>
 方法:
-- `Client(host: str, port: int, is_padding: bool = False, encoding: str = "utf-8")`: 创建客户端
+- `Client(self, host: str, port: int, certfile: str, ssl_key: str, ca_file:str, is_padding: bool = False, encoding: str = "utf-8")`: 创建客户端
 - `_destroyer()`: 从内存中销毁密钥
 - `_handshake()`: 建立加密握手
 - `connect()`: 连接服务器并完成握手
@@ -114,7 +113,7 @@ client.close()
 ### Server
 加密服务端<br>
 方法:
-- `Server(host: str, port: int, is_padding: bool = False, encoding: str = "utf-8")`: 创建服务端
+- `Server(self, host: str, port: int, certfile: str, ssl_key: str, ca_file:str, is_padding: bool = False, encoding: str = "utf-8")`: 创建服务端
 - `_destroyer()`: 从内存中销毁密钥
 - `_handshake()`: 建立加密握手
 - `accept()`: 接受连接并完成握手
@@ -128,6 +127,7 @@ PyEndCrypt/
 ├── README.md        # 自述文件
 ├── NetworkBase.py   # 网络通信基类
 ├── crypto_utils.py  # 加密工具类
+├── LICENSE          # 开源许可证
 ├── client.py        # 加密客户端
 └── server.py        # 加密服务器
 ```
