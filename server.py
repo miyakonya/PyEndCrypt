@@ -98,6 +98,8 @@ class Server(NetworkBase):
             data = str(data).encode(self.encoding)
         edata = CryptoUtils.aes_encrypt(self.aes_key, data, self.seq)
         self._send_raw(edata)
+        self.logger.info(f"当前序列号: {self.seq}")
+        self.logger.info(f"[Server]->[Client]: {data.decode(self.encoding)}")
         self.seq += 1
 
     def receive(self):
@@ -106,6 +108,8 @@ class Server(NetworkBase):
         raw_data = self._recv_raw()
         try:
             data = CryptoUtils.aes_decrypt(self.aes_key, raw_data, self.seq)
+            self.logger.info(f"当前序列号: {self.seq}")
+            self.logger.info(f"[Client]->[Server]: {data.decode(self.encoding)}")
             self.seq += 1
             return data.decode(self.encoding)
         except Exception as e:

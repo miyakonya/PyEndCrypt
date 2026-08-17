@@ -46,7 +46,7 @@ from server import Server
 crt = "" # 服务端证书路径
 key = "" # 服务端密钥路径
 ca_crt = "" # CA证书路径
-padding = False # 是否开启数据包大小伪造
+padding = 0 # 是否开启数据包大小伪造
 
 server = Server("127.0.0.1",
                   5555,
@@ -69,7 +69,7 @@ from client import Client
 crt = "" # 客户端证书路径
 key = "" # 客户端密钥路径
 ca_crt = "" # CA证书路径
-padding = False # 是否开启数据包大小伪造
+padding = 0 # 是否开启数据包大小伪造
 
 client = Client("127.0.0.1",
                   5555,
