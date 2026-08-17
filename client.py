@@ -12,6 +12,7 @@ import socket
 from NetworkBase import NetworkBase
 from crypto_utils import CryptoUtils
 import gc
+from Logger import Logger
 
 class Client(NetworkBase):
     def __init__(self, host: str,
@@ -19,7 +20,7 @@ class Client(NetworkBase):
                  certfile: str,
                  ssl_key: str,
                  ca_file:str,
-                 is_padding: bool = False,
+                 padding: int = 0,
                  encoding: str = "utf-8"):
         """
         创建客户端
@@ -28,15 +29,16 @@ class Client(NetworkBase):
         :param certfile: 客户端证书文件
         :param ssl_key: 客户端私钥文件
         :param ca_file: CA证书文件
-        :param is_padding: 是否开启数据包填充
+        :param padding: 设定数据包填充级别
         :param encoding: 编码格式
         """
         super().__init__(certfile,
                          ssl_key,
                          False,
                          ca_file,
-                         is_padding,
+                         padding,
                          encoding)
+        self.logger = Logger(__name__).getLogger()
         self.ssl_sock = self.context.wrap_socket(
             socket.socket(socket.AF_INET, socket.SOCK_STREAM),
             server_hostname=host)
@@ -47,21 +49,20 @@ class Client(NetworkBase):
         self.nonce = None
         self.handshake_done = False
         self.seq = 1
-        self.is_padding = is_padding
         self.encoding = encoding
         self.pub = None
 
     def _handshake(self):
         """建立加密连接"""
-        print("开始加密握手")
+        self.logger.info("开始加密握手")
         private_key, client_public_bytes = CryptoUtils.generate_x25519_keypair()
-        print(f"生成 X25519 临时公钥，长度{len(client_public_bytes)}字节")
+        self.logger.info(f"生成 X25519 临时公钥，长度{len(client_public_bytes)}字节")
         self._send_raw(client_public_bytes)
-        print("发送临时公钥给服务器")
+        self.logger.info("发送临时公钥给服务器")
         server_public_bytes = self._recv_raw()
         if not server_public_bytes or len(server_public_bytes) != 32:
             raise Exception("接收服务器临时公钥失败")
-        print(f"接收到服务器临时公钥，长度{len(server_public_bytes)}字节")
+        self.logger.info(f"接收到服务器临时公钥，长度{len(server_public_bytes)}字节")
         # 根据临时私钥和服务端公钥派生出共享密钥
         shared_key = CryptoUtils.x25519_derive_shared_key(
             private_key,
@@ -69,20 +70,19 @@ class Client(NetworkBase):
         )
         # 根据共享密钥派生出 AES 密钥
         self.aes_key = CryptoUtils.shared_key_derive_aes_key(shared_key)
-        print(f"AES 密钥派生成功，共{len(self.aes_key)}字节")
+        self.logger.info(f"AES 密钥派生成功，共{len(self.aes_key)}字节")
         del private_key
         self._send_raw(b"Client Hello")
         response = self._recv_raw()
         if response == b"Server Hello":
             self.handshake_done = True
-            print("握手成功，加密通信建立")
-            print("=" * 30)
+            self.logger.info("握手成功，加密通信建立")
         else:
             raise Exception("握手失败")
 
     def connect(self):
         self.ssl_sock.connect((self.host, self.port))
-        print("连接成功")
+        self.logger.info("连接成功")
         self._handshake()
 
     def send(self, data):
@@ -108,7 +108,7 @@ class Client(NetworkBase):
             self.seq += 1
             return data.decode(self.encoding)
         except Exception as e:
-            print("服务端发送了不正确的数据包:", e)
+            self.logger.error("服务端发送了不正确的数据包:", e)
 
     def close(self):
         """销毁 AES 密钥"""

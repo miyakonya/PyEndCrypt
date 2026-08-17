@@ -1,9 +1,13 @@
 # PyEndCrypt
 用Python写的端到端加密工具，采用混合加密，对数据进行双重校验，使用简单，和平常使用socket套接字步骤差不多。
 
+项目目前仍处于开发阶段，如果你想参与开发请看下文[工作清单](#工作清单)
+
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-## 特点
+---
+
+## 💡特点
 - 端到端加密，X25519 + AES 混合加密。
 - 服务端和客户端强制加密，没有明文传输。
 - 自动握手。
@@ -16,17 +20,25 @@
 - 使用mTLS认证，保护服务端和客户端，杜绝中间人攻击。
 - 采用TLS加密传输层，保障传输层安全。
 
-## 加密方案
+---
+
+## 🔐加密方案
+认证：mTLS<br>
+传输层：TLSv1.3<br>
 密钥交换阶段：X25519 256位<br>
 数据加密：AES-GCM 128位<br>
 
-## 依赖安装
+---
+
+## ⚙️依赖安装
 ```bash
 pip install pycryptodome
 pip install eciespy
 ```
 
-## 快速开始
+---
+
+## 🚀快速开始
 服务端
 ```python
 from server import Server
@@ -72,14 +84,18 @@ client.send("Hello From Client")
 client.close()
 ```
 
-## API
+---
+
+## 🔌API
 ### NetworkBase
 网络通信基类，包含数据发送和接收，以及socket套接字的关闭处理<br>
 方法:
-- `_recv_exact(n)`: 精确接收数据
-- `_send_raw(data)`: 发送原始数据包
-- `_recv_raw()`: 接收原始数据包
-- `close`: 关闭连接
+- `_recv_exact(self, n: int)`: 精确接收n个字节数据
+- `_send_raw(self, data)`: 发送原始数据包
+- `_recv_raw(self)`: 接收原始数据包
+- `_add_padding(self, data: bytes)`: 填充数据
+- `_remove_padding(self, data: bytes)`: 移除填充的数据
+- `close(self)`: 关闭连接
 
 ---
 
@@ -121,7 +137,9 @@ client.close()
 - `receive()`: 接收数据并解密
 - `close()`: 关闭连接
 
-## 项目结构
+---
+
+## 🏗️项目结构
 ```
 PyEndCrypt/
 ├── README.md        # 自述文件
@@ -132,14 +150,23 @@ PyEndCrypt/
 └── server.py        # 加密服务器
 ```
 
-## 工作清单
+---
+
+## 📝工作清单
 如果你想参与开发，可以依据这个清单改进(颜色代表优先级)
 
-- ⚪️ ~~实现服务器公钥指纹验证~~（已由TLS和mTLS替代）
-- ⚪️ ~~添加客户端身份验证~~（已由TLS和mTLS替代）
+- ⚫ ~~实现服务器公钥指纹验证~~（已由TLS和mTLS替代）
+- ⚫ ~~添加客户端身份验证~~（已由TLS和mTLS替代）
+- 🔴 添加服务端自动生成证书和密钥返回给客户端
 - 🟡 增加心跳机制
 - 🟡 添加客户端自动重连
 - 🟡 将`print()`替换为日志记录系统
 - 🟡 添加配置文件系统
-- 🟢 做一个简易的，基于`Websocket`的Web聊天室
 - 🟢 优化异常处理
+
+---
+
+## ***⚠️免责声明***
+> 本项目仅用于学习和技术研究，严禁用于任何违法犯罪活动。
+> 使用者必须遵守当地法律法规，并承担使用责任。
+> 本项目开发者不承担因该项目引起的任何法律责任。
