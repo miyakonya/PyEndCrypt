@@ -100,7 +100,7 @@ client.close()
 ---
 
 ### crypto_untils
-加密工具类，所有加密和加密，以及密钥生成均在这里实现<br>
+加密工具类，所有加密和解密，以及密钥生成均在这里实现<br>
 方法:
 - `generate_x25519_keypair()`: 生成 X25519 临时密钥对
 - `x25519_derive_shared_key(private_key: X25519PrivateKey, peer_public_bytes: bytes)`: 用 X25519 密钥派生出共享密钥
@@ -142,12 +142,15 @@ client.close()
 ## 🏗️项目结构
 ```
 PyEndCrypt/
-├── README.md        # 自述文件
-├── NetworkBase.py   # 网络通信基类
-├── crypto_utils.py  # 加密工具类
-├── LICENSE          # 开源许可证
-├── client.py        # 加密客户端
-└── server.py        # 加密服务器
+├── README.md           # 自述文件
+├── LICENSE             # 开源许可证
+├── server.py           # 加密服务端
+├── client.py           # 加密客户端
+└──tools
+   ├── crypto_utils.py  # 加密工具类
+   ├── Logger.py        # 日志记录器
+   ├── NetworkBase.py   # 网络通信基类
+   └── __init__.py
 ```
 
 ---
@@ -157,10 +160,10 @@ PyEndCrypt/
 
 - ⚫ ~~实现服务器公钥指纹验证~~（已由TLS和mTLS替代）
 - ⚫ ~~添加客户端身份验证~~（已由TLS和mTLS替代）
+- ⚫ ~~将`print()`替换为日志记录系统~~（完成）
 - 🔴 添加服务端自动生成证书和密钥返回给客户端
 - 🟡 增加心跳机制
 - 🟡 添加客户端自动重连
-- 🟡 将`print()`替换为日志记录系统
 - 🟡 添加配置文件系统
 - 🟢 优化异常处理
 

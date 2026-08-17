@@ -9,10 +9,10 @@ LICENSE file in the root directory of this source tree.
 
 import socket
 
-from NetworkBase import NetworkBase
-from crypto_utils import CryptoUtils
+from tools.NetworkBase import NetworkBase
+from tools.crypto_utils import CryptoUtils
 import gc
-from Logger import Logger
+from tools.Logger import Logger
 
 class Client(NetworkBase):
     def __init__(self, host: str,
