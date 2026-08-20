@@ -1,11 +1,11 @@
-# coding: UTF-8
-# Python 3.10.6
-
 """
 Copyright (c) 2026 super cat
 This source code is licensed under the MIT license found in the
 LICENSE file in the root directory of this source tree.
 """
+
+# coding: UTF-8
+# Python 3.10.6
 
 from Crypto.Cipher import AES
 from Crypto.Random import get_random_bytes
@@ -15,6 +15,7 @@ from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 from cryptography.hazmat.backends import default_backend
 import struct
 import time
+import subprocess
 
 class CryptoUtils:
     """加密工具类，所有的加密和解密逻辑都在这里"""
@@ -83,7 +84,7 @@ class CryptoUtils:
         return timestamp, rdata, data_seq
 
     @staticmethod
-    def _verify(timestamp: int, seq: int, data_seq: int, window=TIMEOUT):
+    def _verify(timestamp: int, seq: int, data_seq: int, window=TIMEOUT) -> bool:
         """
         数据校验
         :param timestamp: 时间戳
@@ -101,7 +102,7 @@ class CryptoUtils:
         return True
 
     @staticmethod
-    def aes_encrypt(aes_key: bytes, data: bytes, seq: int):
+    def aes_encrypt(aes_key: bytes, data: bytes, seq: int) -> bytes:
         """
         使用 AES 私钥加密数据
         :param aes_key: AES 私钥
@@ -138,3 +139,30 @@ class CryptoUtils:
                 raise Exception("解密失败")
         except BaseException as e:
             raise Exception("AES-GCM 认证失败，数据可能被篡改:", e)
+
+    @staticmethod
+    def generate_cert_key(ca_cert: str, ca_key: str):
+        """
+        生成客户端证书和密钥
+        :return: 客户端证书和密钥
+        """
+        # 生成客户端密钥
+        subprocess.run([
+            "openssl", "genrsa", "-out", "client.key", "2048"
+        ])
+        subprocess.run([
+            "openssl", "req", "-new", "-key", "client.key",
+            "-out", "client.csr", "-subj", "/CN=client"
+        ])
+        # 生成客户端证书
+        subprocess.run([
+            "openssl", "x509", "-req", "-days", "365",
+            "-in", "client.csr", "-CA", f"{ca_cert}",
+            "-CAkey", f"{ca_key}", "-set_serial", "02",
+            "-out", "client.crt"
+        ])
+        with open("client.crt", "r") as cr:
+            cert = cr.read()
+        with open("client.key", "r") as kr:
+            key = kr.read()
+        return cert, key
