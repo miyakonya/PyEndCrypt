@@ -19,6 +19,7 @@
 - 自动从内存中销毁密钥数据。
 - 使用mTLS认证，保护服务端和客户端，杜绝中间人攻击。
 - 采用TLS加密传输层，保障传输层安全。
+- 支持动态客户端证书签发，客户端只需要 CA 证书即可
 
 ---
 
@@ -33,7 +34,7 @@
 ## ⚙️依赖安装
 ```bash
 pip install pycryptodome
-pip install eciespy
+pip install cryptography
 ```
 
 ---
@@ -45,15 +46,17 @@ from server import Server
 
 crt = "" # 服务端证书路径
 key = "" # 服务端密钥路径
-ca_crt = "" # CA证书路径
-padding = 0 # 是否开启数据包大小伪造
+ca_crt = "" # CA 证书路径
+ca_key = "" # CA 密钥路径
+padding = 0 # 数据包填充级别
 
 server = Server("127.0.0.1",
-                  5555,
-                  crt,
-                  key,
-                  ca_crt,
-                  padding)
+                5555,
+                crt,
+                key,
+                ca_crt, 
+                ca_key, 
+                padding)
 server.accept()
 server.send("Hello From Server")
 data = server.receive()
@@ -66,17 +69,13 @@ server.close()
 ```python
 from client import Client
 
-crt = "" # 客户端证书路径
-key = "" # 客户端密钥路径
-ca_crt = "" # CA证书路径
-padding = 0 # 是否开启数据包大小伪造
+ca_crt = "" # CA 证书路径
+padding = 0 # 数据包填充级别
 
 client = Client("127.0.0.1",
-                  5555,
-                  crt,
-                  key,
-                  ca_crt,
-                  padding)
+                5555,
+                ca_crt,
+                padding)
 client.connect()
 data = client.receive()
 print(data)
@@ -139,6 +138,22 @@ client.close()
 
 ---
 
+### CredentialProvisioner
+证书密钥生成器<br>
+方法:
+- `Generator(self, ca_cert: str, ca_key: str)`: 创建生成器
+- `generate_cert(self, client_key)`: 生成客户端证书文件
+- `generate_key(self)`: 生成客户端密钥文件
+
+---
+
+### SSLBuilder
+SSL 连接构建器<br>
+方法:
+- `Builder(self, cert: str, key: str, ca_cert: str, is_server)`: 创建构建器
+
+---
+
 ## 🏗️项目结构
 ```
 PyEndCrypt/
@@ -150,6 +165,8 @@ PyEndCrypt/
    ├── crypto_utils.py  # 加密工具类
    ├── Logger.py        # 日志记录器
    ├── NetworkBase.py   # 网络通信基类
+   ├── CredentialProvisioner    # 客户端证书和密钥生成器
+   ├── SSLBuilder       # SSL 连接构建器
    └── __init__.py
 ```
 
@@ -161,7 +178,7 @@ PyEndCrypt/
 - ⚫ ~~实现服务器公钥指纹验证~~（已由TLS和mTLS替代）
 - ⚫ ~~添加客户端身份验证~~（已由TLS和mTLS替代）
 - ⚫ ~~将`print()`替换为日志记录系统~~（完成）
-- 🔴 添加服务端自动生成证书和密钥返回给客户端
+- ⚫ ~~添加服务端自动生成证书和密钥返回给客户端~~（完成）
 - 🟡 增加心跳机制
 - 🟡 添加客户端自动重连
 - 🟡 添加配置文件系统

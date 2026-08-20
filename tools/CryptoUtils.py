@@ -4,8 +4,12 @@ This source code is licensed under the MIT license found in the
 LICENSE file in the root directory of this source tree.
 """
 
+"""
+加密工具类，所有的加密和解密逻辑都在这里
+"""
+
 # coding: UTF-8
-# Python 3.10.6
+# Python 3.14.7
 
 from Crypto.Cipher import AES
 from Crypto.Random import get_random_bytes
@@ -18,7 +22,6 @@ import time
 import subprocess
 
 class CryptoUtils:
-    """加密工具类，所有的加密和解密逻辑都在这里"""
     TIMEOUT = 300   # 5分钟
     @staticmethod
     def generate_x25519_keypair():
