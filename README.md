@@ -83,6 +83,8 @@ client.send("Hello From Client")
 client.close()
 ```
 
+关于各个证书和密钥，如果是测试环境，可以使用`tools/generator.py`一键生成。
+
 ---
 
 ## 🔌API
