@@ -1,53 +1,53 @@
-# encoding: UTF-8
-# Python 3.10.6
-
 """
 Copyright (c) 2026 super cat
 This source code is licensed under the MIT license found in the
 LICENSE file in the root directory of this source tree.
 """
 
+# coding: UTF-8
+# Python 3.14.7
+
 import socket
 from tools.NetworkBase import NetworkBase
-from tools.crypto_utils import CryptoUtils
-import gc
+from tools.CryptoUtils import CryptoUtils
 from tools.Logger import Logger
+from tools.SSLBuilder import Builder
+from tools.CredentialProvisioner import Generator
+import gc
 
-class Server(NetworkBase):
+class Server(NetworkBase, Builder):
     def __init__(self, host: str,
                  port: int,
-                 certfile: str,
-                 ssl_key: str,
-                 ca_file:str,
+                 server_cert: str,
+                 server_key: str,
+                 ca_cert:str,
+                 ca_key: str,
                  padding: int = 0,
                  encoding: str = "utf-8"):
         """
         创建服务端
         :param host: 主机
         :param port: 端口
-        :param certfile: 服务端证书文件
-        :param ssl_key: 服务端私钥文件
-        :param ca_file: CA证书文件
+        :param server_cert: 服务端证书文件
+        :param server_key: 服务端私钥文件
+        :param ca_cert: CA 证书文件
+        :param ca_key: CA 密钥文件
         :param padding: 设定数据包填充级别
         :param encoding: 编码格式
         """
-        super().__init__(certfile,
-                         ssl_key,
-                         True,
-                         ca_file,
-                         padding,
-                         encoding)
+        NetworkBase.__init__(self, padding, encoding)
+        Builder.__init__(self, server_cert, server_key, ca_cert, True)
         self.logger = Logger(__name__).getLogger()
         self.listen_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.listen_sock.bind((host, port))
         self.listen_sock.listen(1)
-        self.ssl_sock = self.context.wrap_socket(self.listen_sock, server_side=True)
         self.conn = None
         self.addr = None
         self.aes_key = None
         self.handshake_done = False
         self.seq = 1
         self.encoding = encoding
+        self.ca_key = ca_key
 
     def _handshake(self):
         """加密握手实现"""
@@ -82,9 +82,26 @@ class Server(NetworkBase):
 
     def accept(self):
         self.logger.info("服务器启动，等待客户端连接")
-        self.conn, self.addr = self.ssl_sock.accept()
-        self.ssl_sock = self.conn
+        # 暂时使用普通套接字给客户端发送证书密钥文件
+        self.conn, self.addr = self.listen_sock.accept()
         self.logger.info(f"{self.addr[0]}:{self.addr[1]} 连接到本服务器")
+        self.sock = self.conn
+        self._handshake()
+        self.logger.info("准备向客户端发送证书密钥文件")
+        g = Generator(self.ca_cert, self.ca_key)
+        client_key, path = g.generate_key()
+        client_cert = g.generate_cert(path)
+        self.send(client_key)
+        self.send(client_cert)
+        self.logger.info("发送完毕")
+
+        # 关闭普通套接字，开始使用 SSL 套接字进行正式通信
+        self.conn.close()
+        self.conn = None
+        self.sock = None
+        self.conn, self.addr = self.listen_sock.accept()
+        self.ssl_sock = self.context.wrap_socket(self.conn, server_side=True)
+        self.logger.info("SSL连接成功")
         self._handshake()
 
     def send(self, data):
@@ -96,10 +113,12 @@ class Server(NetworkBase):
             pass
         else:
             data = str(data).encode(self.encoding)
+        if self.padding != 0:
+            data = self._add_padding(data)
         edata = CryptoUtils.aes_encrypt(self.aes_key, data, self.seq)
         self._send_raw(edata)
         self.logger.info(f"当前序列号: {self.seq}")
-        self.logger.info(f"[Server]->[Client]: {data.decode(self.encoding)}")
+        self.logger.info(f"[Server]->[Client]: 发送{len(data)}字节")
         self.seq += 1
 
     def receive(self):
@@ -108,8 +127,10 @@ class Server(NetworkBase):
         raw_data = self._recv_raw()
         try:
             data = CryptoUtils.aes_decrypt(self.aes_key, raw_data, self.seq)
+            if self.padding != 0:
+                data = self._remove_padding(data)
             self.logger.info(f"当前序列号: {self.seq}")
-            self.logger.info(f"[Client]->[Server]: {data.decode(self.encoding)}")
+            self.logger.info(f"[Client]->[Server]: 接收{len(data)}字节")
             self.seq += 1
             return data.decode(self.encoding)
         except Exception as e:
