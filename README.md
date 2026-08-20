@@ -162,7 +162,7 @@ PyEndCrypt/
 ├── server.py           # 加密服务端
 ├── client.py           # 加密客户端
 └──tools
-   ├── crypto_utils.py  # 加密工具类
+   ├── CryptoUtils.py  # 加密工具类
    ├── Logger.py        # 日志记录器
    ├── NetworkBase.py   # 网络通信基类
    ├── CredentialProvisioner.py    # 客户端证书和密钥生成器
