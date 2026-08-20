@@ -98,7 +98,7 @@ client.close()
 
 ---
 
-### crypto_untils
+### CryptoUntils
 加密工具类，所有加密和解密，以及密钥生成均在这里实现<br>
 方法:
 - `generate_x25519_keypair()`: 生成 X25519 临时密钥对
@@ -165,8 +165,9 @@ PyEndCrypt/
    ├── crypto_utils.py  # 加密工具类
    ├── Logger.py        # 日志记录器
    ├── NetworkBase.py   # 网络通信基类
-   ├── CredentialProvisioner    # 客户端证书和密钥生成器
-   ├── SSLBuilder       # SSL 连接构建器
+   ├── CredentialProvisioner.py    # 客户端证书和密钥生成器
+   ├── SSLBuilder.py       # SSL 连接构建器
+   ├── generator.py     # 证书密钥全生成器
    └── __init__.py
 ```
 
