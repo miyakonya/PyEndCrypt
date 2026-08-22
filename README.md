@@ -91,6 +91,20 @@ client.close()
 
 关于各个证书和密钥，如果是测试环境，可以使用`tools/generator.py`一键生成。
 
+### 💬Web聊天室
+`config.json`配置完毕后
+
+中转服务器
+```bash
+python3 RelayServer.py
+```
+
+各个客户端
+```bash
+python3 WebClient.py
+```
+客户端打开网页即可
+
 ---
 
 ## 数据结构

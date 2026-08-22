@@ -24,7 +24,7 @@ app = Flask(__name__)
 app.config["SECRET_KEY"] = "client-secret-key-2024"
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode="threading")
 
-with open("config.json", "r") as r:
+with open("test/static/config.json", "r") as r:
     config = json.load(r)
 
 CHAT_SERVER_URL = config["WebClient"]["ChatServerURL"]

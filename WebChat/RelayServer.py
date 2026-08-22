@@ -21,7 +21,7 @@ import threading
 import json
 import os
 
-with open("config.json", "r") as r:
+with open("test/static/config.json", "r") as r:
     config = json.load(r)
 
 app = Flask(__name__)
