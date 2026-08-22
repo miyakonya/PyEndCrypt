@@ -36,12 +36,18 @@ class NetworkBase:
         self.padding = padding
         self.padding_size = 128 # 设定填充块大小为128字节
 
+    def _get_socket(self):
+        if self.ssl_sock:
+            return self.ssl_sock
+        return self.sock
+
     def _recv_exact(self, n: int) -> bytes:
         """
         精确接收n个字节的数据
         :param n: 接收字节
         :return: 数据
         """
+        sock = self._get_socket()
         if n > self.MAX_SIZE:
             raise ConnectionError("接收到了过大的数据包！")
 
@@ -49,12 +55,8 @@ class NetworkBase:
             raise ConnectionError("Socket没有初始化")
         data = b''
         while (len(data)) < n:
-            if not self.sock:
-                chunk = self.ssl_sock.recv(n - len(data))
-                data += chunk
-            else:
-                chunk = self.sock.recv(n - len(data))
-                data += chunk
+            chunk = sock.recv(n - len(data))
+            data += chunk
             if not chunk:
                 raise ConnectionError("连接已断开")
         return data
@@ -103,6 +105,7 @@ class NetworkBase:
         :param data:要发送的数据
         :return: 无
         """
+        sock = self._get_socket()
         if not self.ssl_sock and not self.sock:
             raise ConnectionError("Socket没有初始化")
         if isinstance(data, str):
@@ -116,10 +119,7 @@ class NetworkBase:
             raise ConnectionError("发送的数据包太大！")
         header = struct.pack("!I", length)
         data = header + data
-        if self.sock:
-            self.sock.sendall(data)
-        else:
-            self.ssl_sock.sendall(data)
+        sock.sendall(data)
 
     def _recv_raw(self) -> bytes:
         """

@@ -22,7 +22,7 @@ class Generator:
         self.ca_cert = ca_cert
         self.ca_key = ca_key
         if not shutil.which("openssl"):
-            raise EnvironmentError("尚未安装openssl，请先安装openssl：https://github.com/openssl/openssl")
+            raise EnvironmentError("尚未安装openssl，请先安装openssl")
 
     def generate_cert(self, client_key):
         """生成客户端证书"""

@@ -1,6 +1,9 @@
 # PyEndCrypt
 用Python写的端到端加密工具，采用混合加密，对数据进行双重校验，使用简单，和平常使用socket套接字步骤差不多。
 
+本项目内置有Web聊天室，其原理是在客户端本地开启Flask小型网页渲染用户UI界面，Flask后端连接中转服务器。
+中转服务器将各个客户端的数据进行转发，所有数据不存储也不解密。
+
 项目目前仍处于开发阶段，如果你想参与开发请看下文[工作清单](#工作清单)
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
@@ -12,14 +15,13 @@
 - 服务端和客户端强制加密，没有明文传输。
 - 自动握手。
 - 使用简单，代码简洁。
-- 时间戳和消息序列号双重校验，防止重放攻击。
+- ***时间戳和消息序列号双重校验***，防止重放攻击。
 - 自动校验数据，保障安全性和完整性。
 - 可以根据API自行进行拓展。
-- 支持数据包大小伪造。
-- 自动从内存中销毁密钥数据。
-- 使用mTLS认证，保护服务端和客户端，杜绝中间人攻击。
-- 采用TLS加密传输层，保障传输层安全。
-- 支持动态客户端证书签发，客户端只需要 CA 证书即可
+- ***支持数据包大小伪造***。
+- ***使用mTLS认证***，保护服务端和客户端，杜绝中间人攻击。
+- ***采用TLS加密传输层***，保障传输层安全。
+- ***支持动态客户端证书签发***，客户端只需要 CA 证书即可
 
 ---
 
@@ -35,6 +37,10 @@
 ```bash
 pip install pycryptodome
 pip install cryptography
+pip install flask
+pip install flask_socketio
+pip install eventlet
+pip install requests
 ```
 
 ---
@@ -87,6 +93,28 @@ client.close()
 
 ---
 
+## 数据结构
+```
+┌──────────────────────────────────────────────────────────────────────────────┐
+│                    应用层 (AES-GCM 加密前)                                   │
+├──────────┬──────────┬──────────────────────┬───────────────────────────────┤
+│ 总长度头 │ 原始长度头│         数据         │           填充                 │
+│  4 字节  │  4 字节  │       变长          │          变长                  │
+├──────────┴──────────┴──────────────────────┴───────────────────────────────┤
+│                          AES-256-GCM 加密                                   │
+├──────────┬──────────────────────────────────────────────┬───────────────────┤
+│  Nonce   │                密文                          │       Tag         │
+│ 12 字节  │              变长                           │     16 字节       │
+├──────────┴──────────────────────────────────────────────┴───────────────────┤
+│                          TLS 传输层封装                                     │
+├──────────┬──────────┬──────────┬───────────────────────────────────────────┤
+│  TLS类型 │ TLS版本  │ TLS长度 │              TLS加密数据                   │
+│  1 字节  │  2 字节  │  2 字节 │              变长                         │
+└──────────┴──────────┴──────────┴───────────────────────────────────────────┘
+```
+
+---
+
 ## 🔌API
 ### NetworkBase
 网络通信基类，包含数据发送和接收，以及socket套接字的关闭处理<br>
@@ -117,9 +145,9 @@ client.close()
 ### Client
 加密客户端<br>
 方法:
-- `Client(self, host: str, port: int, certfile: str, ssl_key: str, ca_file:str, is_padding: bool = False, encoding: str = "utf-8")`: 创建客户端
-- `_destroyer()`: 从内存中销毁密钥
+- `Client(self, host: str, port: int, ca_cert: str, padding: int = 0, encoding: str = "utf-8")`: 创建客户端
 - `_handshake()`: 建立加密握手
+- `_handshake_ssl()`: SSL 连接上建立加密握手
 - `connect()`: 连接服务器并完成握手
 - `send(data)`: 加密数据并发送
 - `receive()`: 接收数据并解密
@@ -130,12 +158,13 @@ client.close()
 ### Server
 加密服务端<br>
 方法:
-- `Server(self, host: str, port: int, certfile: str, ssl_key: str, ca_file:str, is_padding: bool = False, encoding: str = "utf-8")`: 创建服务端
-- `_destroyer()`: 从内存中销毁密钥
+- `Server(self, host: str, port: int, listen: int, server_cert: str, server_key: str, ca_cert:str, ca_key: str, padding: int = 0, encoding: str = "utf-8")`: 创建服务端
 - `_handshake()`: 建立加密握手
+- ` _handshake_ssl()`: SSL 连接上建立加密握手
 - `accept()`: 接受连接并完成握手
 - `send(data)`: 加密数据并发送
 - `receive()`: 接收数据并解密
+- `create_new_instance()`: 创建新的服务端实例
 - `close()`: 关闭连接
 
 ---
@@ -156,6 +185,40 @@ SSL 连接构建器<br>
 
 ---
 
+## 配件文件说明
+```json
+{
+  "RelayServer": {
+    "Host": "中转服务器地址",
+    "Port": 中转服务器端口,
+    "Listen": 监听数,
+    "Padding": 填充模式,
+    "Encoding": "编码格式",
+    "Certificates": {
+      "ServerCert": "服务器证书路径",
+      "ServerKey": "服务器私钥路径",
+      "CaCert": "CA 证书路径",
+      "CaKey": "CA 密钥路径"
+    }
+  },
+    "WebClient": {
+      "Host": "本机地址",
+      "Port": Web网页端口,
+      "RelayServer": {
+        "Host": "中转服务器地址",
+        "WebSocketPort": 中转服务器端口
+      },
+      "ChatServerURL": "中转服务器 URL",
+      "WebSocketURL": "中转服务器 WS URL",
+      "CaCert": "CA 证书路径",
+      "Padding": 填充模式,
+      "Encoding": "编码格式"
+    }
+}
+```
+
+---
+
 ## 🏗️项目结构
 ```
 PyEndCrypt/
@@ -163,14 +226,21 @@ PyEndCrypt/
 ├── LICENSE             # 开源许可证
 ├── server.py           # 加密服务端
 ├── client.py           # 加密客户端
-└──tools
-   ├── CryptoUtils.py   # 加密工具类
-   ├── Logger.py        # 日志记录器
-   ├── NetworkBase.py   # 网络通信基类
-   ├── CredentialProvisioner.py    # 客户端证书和密钥生成器
-   ├── SSLBuilder.py    # SSL 连接构建器
-   ├── generator.py     # 证书密钥全生成器
-   └── __init__.py
+├── WebChat
+│   ├── static/         # 静态文件(JS和CSS)
+│   ├── templates/      # 首页html文件
+│   ├── config.json     # 配置文件
+│   ├── RelayServer.py  # 中转服务器
+│   ├── WebClient.py    # 网页客户端
+│   └── __init__.py
+└── tools
+    ├── CryptoUtils.py   # 加密工具类
+    ├── Logger.py        # 日志记录器
+    ├── NetworkBase.py   # 网络通信基类
+    ├── CredentialProvisioner.py    # 客户端证书和密钥生成器
+    ├── SSLBuilder.py    # SSL 连接构建器
+    ├── generator.py     # 证书密钥全生成器
+    └── __init__.py
 ```
 
 ---
@@ -182,9 +252,10 @@ PyEndCrypt/
 - ⚫ ~~添加客户端身份验证~~（已由TLS和mTLS替代）
 - ⚫ ~~将`print()`替换为日志记录系统~~（完成）
 - ⚫ ~~添加服务端自动生成证书和密钥返回给客户端~~（完成）
+- ⚫ ~~添加配置文件系统~~（完成）
 - 🟡 增加心跳机制
+- 🟡 从内存中销毁密钥
 - 🟡 添加客户端自动重连
-- 🟡 添加配置文件系统
 - 🟢 优化异常处理
 
 ---

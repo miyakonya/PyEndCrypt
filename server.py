@@ -18,6 +18,7 @@ import gc
 class Server(NetworkBase, Builder):
     def __init__(self, host: str,
                  port: int,
+                 listen: int,
                  server_cert: str,
                  server_key: str,
                  ca_cert:str,
@@ -38,9 +39,12 @@ class Server(NetworkBase, Builder):
         NetworkBase.__init__(self, padding, encoding)
         Builder.__init__(self, server_cert, server_key, ca_cert, True)
         self.logger = Logger(__name__).getLogger()
-        self.listen_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.listen_sock.bind((host, port))
-        self.listen_sock.listen(1)
+        if listen > 0:
+            self.listen_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            self.listen_sock.bind((host, port))
+            self.listen_sock.listen(listen)
+        else:
+            self.listen_sock = None
         self.conn = None
         self.addr = None
         self.aes_key = None
@@ -48,6 +52,49 @@ class Server(NetworkBase, Builder):
         self.seq = 1
         self.encoding = encoding
         self.ca_key = ca_key
+        self.host = host
+        self.port = port
+        self.server_cert = server_cert
+        self.server_key = server_key
+
+    def handle_client(self, conn, addr):
+        """
+        处理已连接的客户端（用于多客户端场景）
+        :param conn: 已建立的 socket 连接
+        :param addr: 客户端地址
+        """
+        self.conn = conn
+        self.addr = addr
+        self.sock = conn
+
+        self.seq = 1
+        self.handshake_done = False
+        self.aes_key = None
+
+        self.logger.info(f"开始处理客户端 {addr}")
+
+        try:
+            self._handshake()
+            self.logger.info("准备向客户端发送证书密钥文件")
+
+            g = Generator(self.ca_cert, self.ca_key)
+            client_key, path = g.generate_key()
+            client_cert = g.generate_cert(path)
+            self.send(client_key)
+            self.send(client_cert)
+            self.logger.info("证书和密钥已发送")
+
+            self.sock.close()
+            self.sock = None
+            self.conn = None
+            self.logger.info("证书分发完成")
+
+            self.logger.info(f"客户端 {addr} 处理完成")
+            return self.sock, self.addr
+
+        except Exception as e:
+            self.logger.error(f"处理客户端 {addr} 错误: {e}")
+            raise
 
     def _handshake(self):
         """加密握手实现"""
@@ -80,6 +127,33 @@ class Server(NetworkBase, Builder):
         except Exception as e:
             self.logger.error(f"解密 AES 密钥失败:{e}")
 
+    def _handshake_ssl(self):
+        """SSL 连接上的加密握手（直接使用 ssl_sock）"""
+        self.logger.info("开始 SSL 加密握手")
+
+        # 直接接收 32 字节公钥
+        client_public_bytes = self.ssl_sock.recv(32)
+        if not client_public_bytes or len(client_public_bytes) != 32:
+            raise Exception("接收客户端临时公钥失败")
+        self.logger.info(f"接收到客户端临时公钥，长度{len(client_public_bytes)}字节")
+
+        private_key, public_key = CryptoUtils.generate_x25519_keypair()
+        self.ssl_sock.sendall(public_key)
+        self.logger.info("发送临时公钥给客户端")
+
+        shared_key = CryptoUtils.x25519_derive_shared_key(private_key, client_public_bytes)
+        self.aes_key = CryptoUtils.shared_key_derive_aes_key(shared_key)
+        self.logger.info(f"AES 密钥派生成功，共{len(self.aes_key)}字节")
+        del private_key
+
+        response = self.ssl_sock.recv(12)  # "Client Hello" 是 12 字节
+        if response == b"Client Hello":
+            self.ssl_sock.sendall(b"Server Hello")
+            self.handshake_done = True
+            self.logger.info("SSL 握手成功，加密通信建立")
+        else:
+            raise Exception("握手失败")
+
     def accept(self):
         self.logger.info("服务器启动，等待客户端连接")
         # 暂时使用普通套接字给客户端发送证书密钥文件
@@ -102,7 +176,8 @@ class Server(NetworkBase, Builder):
         self.conn, self.addr = self.listen_sock.accept()
         self.ssl_sock = self.context.wrap_socket(self.conn, server_side=True)
         self.logger.info("SSL连接成功")
-        self._handshake()
+        self._handshake_ssl()
+        self.logger.info("预先验证全部完成")
 
     def send(self, data):
         if not self.handshake_done or not self.aes_key:
@@ -135,6 +210,20 @@ class Server(NetworkBase, Builder):
             return data.decode(self.encoding)
         except Exception as e:
             self.logger.error("服务端发送了不正确的数据包:", e)
+
+    def create_new_instance(self):
+        """创建新的 Server 实例（用于多客户端）"""
+        return Server(
+            host=self.host,
+            port=self.port,
+            listen=0,  # 不监听
+            server_cert=self.server_cert,
+            server_key=self.server_key,
+            ca_cert=self.ca_cert,
+            ca_key=self.ca_key,
+            padding=self.padding,
+            encoding=self.encoding
+        )
 
     def close(self):
         """销毁 AES 密钥"""
