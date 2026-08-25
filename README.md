@@ -34,10 +34,6 @@
 ```bash
 pip install pycryptodome
 pip install cryptography
-pip install flask
-pip install flask_socketio
-pip install eventlet
-pip install requests
 ```
 
 ---
@@ -144,7 +140,6 @@ client.close()
 方法:
 - `Client(self, host: str, port: int, ca_cert: str, padding: int = 0, encoding: str = "utf-8")`: 创建客户端
 - `_handshake()`: 建立加密握手
-- `_handshake_ssl()`: SSL 连接上建立加密握手
 - `connect()`: 连接服务器并完成握手
 - `send(data)`: 加密数据并发送
 - `receive()`: 接收数据并解密
@@ -157,7 +152,6 @@ client.close()
 方法:
 - `Server(self, host: str, port: int, listen: int, server_cert: str, server_key: str, ca_cert:str, ca_key: str, padding: int = 0, encoding: str = "utf-8")`: 创建服务端
 - `_handshake()`: 建立加密握手
-- ` _handshake_ssl()`: SSL 连接上建立加密握手
 - `accept()`: 接受连接并完成握手
 - `send(data)`: 加密数据并发送
 - `receive()`: 接收数据并解密

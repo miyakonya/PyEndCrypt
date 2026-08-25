@@ -8,7 +8,6 @@ LICENSE file in the root directory of this source tree.
 # Python 3.14.7
 
 import socket
-
 from tools.NetworkBase import NetworkBase
 from tools.CryptoUtils import CryptoUtils
 from tools.Logger import Logger
@@ -75,41 +74,13 @@ class Client(NetworkBase, Builder):
         else:
             raise Exception("握手失败")
 
-    def _handshake_ssl(self):
-        """SSL 连接上的加密握手（直接使用 ssl_sock）"""
-        self.logger.info("开始 SSL 加密握手")
-        private_key, client_public_bytes = CryptoUtils.generate_x25519_keypair()
-        self.logger.info(f"生成 X25519 临时公钥，长度{len(client_public_bytes)}字节")
-
-        # 直接通过 ssl_sock 发送公钥（不加长度头）
-        self.ssl_sock.sendall(client_public_bytes)
-        self.logger.info("发送临时公钥给服务器")
-
-        # 直接接收 32 字节公钥
-        server_public_bytes = self.ssl_sock.recv(32)
-        if not server_public_bytes or len(server_public_bytes) != 32:
-            raise Exception("接收服务器临时公钥失败")
-        self.logger.info(f"接收到服务器临时公钥，长度{len(server_public_bytes)}字节")
-
-        shared_key = CryptoUtils.x25519_derive_shared_key(private_key, server_public_bytes)
-        self.aes_key = CryptoUtils.shared_key_derive_aes_key(shared_key)
-        self.logger.info(f"AES 密钥派生成功，共{len(self.aes_key)}字节")
-        del private_key
-
-        # 发送确认
-        self.ssl_sock.sendall(b"Client Hello")
-        response = self.ssl_sock.recv(12)  # "Server Hello" 是 12 字节
-        if response == b"Server Hello":
-            self.handshake_done = True
-            self.logger.info("SSL 握手成功，加密通信建立")
-        else:
-            raise Exception("握手失败")
-
     def connect(self):
         # 暂时使用普通套接字连接服务端获取证书密钥
         self.sock.connect((self.host, self.port))
         self.logger.info("连接成功")
+        self.logger.info("===== 预先握手开始 =====")
         self._handshake()
+        self.logger.info("===== 预先握手结束 =====")
         self.client_key = self.receive()
         self.client_cert = self.receive()
         if not self.client_cert or not self.client_key:
@@ -139,10 +110,12 @@ class Client(NetworkBase, Builder):
         self.ssl_sock = self.context.wrap_socket(self.sock, server_hostname=self.host)
         self.ssl_sock.settimeout(300)
         self.ssl_sock.connect((self.host, self.port))
-        # self.sock = None
-        self.logger.info("SSL连接成功")
-        self._handshake_ssl()
-        self.logger.info("预先验证全部完成")
+        self.sock = None
+        self.logger.info("SSL 加密完毕")
+        self.logger.info("===== 端到端加密握手开始 =====")
+        self._handshake()
+        self.logger.info("===== 端到端加密握手结束 =====")
+        self.logger.info("===== 预先验证全部完成 =====")
 
     def send(self, data):
         if not self.handshake_done or not self.aes_key:
