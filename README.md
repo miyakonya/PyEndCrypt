@@ -1,9 +1,6 @@
 # PyEndCrypt
 用Python写的端到端加密工具，采用混合加密，对数据进行双重校验，使用简单，和平常使用socket套接字步骤差不多。
 
-本项目内置有Web聊天室，其原理是在客户端本地开启Flask小型网页渲染用户UI界面，Flask后端连接中转服务器。
-中转服务器将各个客户端的数据进行转发，所有数据不存储也不解密。
-
 项目目前仍处于开发阶段，如果你想参与开发请看下文[工作清单](#工作清单)
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
@@ -90,20 +87,6 @@ client.close()
 ```
 
 关于各个证书和密钥，如果是测试环境，可以使用`tools/generator.py`一键生成。
-
-### 💬Web聊天室
-`config.json`配置完毕后
-
-中转服务器
-```bash
-python3 RelayServer.py
-```
-
-各个客户端
-```bash
-python3 WebClient.py
-```
-客户端打开网页即可
 
 ---
 
@@ -199,38 +182,6 @@ SSL 连接构建器<br>
 
 ---
 
-## 配件文件说明
-```json
-{
-  "RelayServer": {
-    "Host": "中转服务器地址",
-    "Port": 中转服务器端口,
-    "Listen": 监听数,
-    "Padding": 填充模式,
-    "Encoding": "编码格式",
-    "Certificates": {
-      "ServerCert": "服务器证书路径",
-      "ServerKey": "服务器私钥路径",
-      "CaCert": "CA 证书路径",
-      "CaKey": "CA 密钥路径"
-    }
-  },
-    "WebClient": {
-      "Host": "本机地址",
-      "Port": Web网页端口,
-      "RelayServer": {
-        "Host": "中转服务器地址",
-        "WebSocketPort": 中转服务器端口
-      },
-      "ChatServerURL": "中转服务器 URL",
-      "WebSocketURL": "中转服务器 WS URL",
-      "CaCert": "CA 证书路径",
-      "Padding": 填充模式,
-      "Encoding": "编码格式"
-    }
-}
-```
-
 ---
 
 ## 🏗️项目结构
@@ -240,13 +191,6 @@ PyEndCrypt/
 ├── LICENSE             # 开源许可证
 ├── server.py           # 加密服务端
 ├── client.py           # 加密客户端
-├── WebChat
-│   ├── static/         # 静态文件(JS和CSS)
-│   ├── templates/      # 首页html文件
-│   ├── config.json     # 配置文件
-│   ├── RelayServer.py  # 中转服务器
-│   ├── WebClient.py    # 网页客户端
-│   └── __init__.py
 └── tools
     ├── CryptoUtils.py   # 加密工具类
     ├── Logger.py        # 日志记录器
