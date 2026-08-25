@@ -17,10 +17,12 @@ from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey, X
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 from cryptography.hazmat.backends import default_backend
+from kyber_py.ml_kem import ML_KEM_768
 from .exceptions import *
 import struct
 import time
 import subprocess
+
 class CryptoUtils:
     TIMEOUT = 300   # 5分钟
     @staticmethod
@@ -45,9 +47,30 @@ class CryptoUtils:
         return shared_key
 
     @staticmethod
-    def shared_key_derive_aes_key(shared_key: bytes) -> bytes:
+    def generate_kyber_keypair():
+        """生成 kyber 密钥对"""
+        public_key, private_key = ML_KEM_768.keygen()
+        return public_key, private_key
+
+    @staticmethod
+    def encaps(public_key: bytes):
+        """用 kyber 公钥封装共享密钥"""
+        shared_key, ciphertext = ML_KEM_768.encaps(public_key)
+        return shared_key, ciphertext
+
+    @staticmethod
+    def decaps(private_key: bytes, ciphertext: bytes):
+        """用 kyber 私钥解封装共享密钥"""
+        return ML_KEM_768.decaps(private_key, ciphertext)
+
+    @staticmethod
+    def generate_salt():
+        """生成随机256位的随机盐"""
+        return get_random_bytes(32)
+
+    @staticmethod
+    def shared_key_derive_aes_key(shared_key: bytes, salt: bytes) -> bytes:
         """从共享密钥中派生出 AES 密钥"""
-        salt = b'E\xf6VL\xb2\x1fF\xcct\xf9\xfc\xeb\xa9\x17DX~\xf9\x12\x0cb>\xf9\x953\xb3\x16\x06h\xa5j\xe4'
         hkdf = HKDF(
             algorithm=hashes.SHA256(), 
             length=32, 
@@ -107,7 +130,7 @@ class CryptoUtils:
     @staticmethod
     def aes_encrypt(aes_key: bytes, data: bytes, seq: int) -> bytes:
         """
-        使用 AES 私钥加密数据
+        使用 AES 密钥加密数据
         :param aes_key: AES 私钥
         :param data: 要加密的数据
         :param seq: 序列号
@@ -122,7 +145,7 @@ class CryptoUtils:
     @staticmethod
     def aes_decrypt(aes_key: bytes, data: bytes, seq: int) -> bytes:
         """
-        使用 AES 私钥解密数据
+        使用 AES 密钥解密数据
         :param aes_key: AES 私钥
         :param data: 加密的数据
         :param seq: 序列号
