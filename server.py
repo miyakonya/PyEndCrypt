@@ -13,8 +13,8 @@ from tools.CryptoUtils import CryptoUtils
 from tools.Logger import Logger
 from tools.SSLBuilder import Builder
 from tools.CredentialProvisioner import Generator
+from tools.exceptions import HandshakeError
 import gc
-
 class Server(NetworkBase, Builder):
     def __init__(self, host: str,
                  port: int,
@@ -103,7 +103,7 @@ class Server(NetworkBase, Builder):
         private_key, public_key = CryptoUtils.generate_x25519_keypair()
         client_public_bytes = self._recv_raw()
         if not client_public_bytes or len(client_public_bytes) != 32:
-            raise Exception("接收客户端临时公钥失败")
+            raise HandshakeError("接收客户端临时公钥失败")
         try:
             self.logger.info(f"接收到客户端临时公钥，长度{len(client_public_bytes)}字节")
             self._send_raw(public_key)
@@ -123,9 +123,10 @@ class Server(NetworkBase, Builder):
                 self.handshake_done = True
                 self.logger.info("握手成功，加密通信建立")
             else:
-                raise Exception("握手失败")
+                raise HandshakeError("握手失败")
         except Exception as e:
-            self.logger.error(f"解密 AES 密钥失败:{e}")
+            self.logger.error(f"握手失败: {e}")
+            raise HandshakeError(f"握手失败: {e}") from e
 
     def accept(self):
         self.logger.info("服务器启动，等待客户端连接")
@@ -158,7 +159,7 @@ class Server(NetworkBase, Builder):
 
     def send(self, data):
         if not self.handshake_done or not self.aes_key:
-            raise Exception("没有完成加密握手")
+            raise HandshakeError("没有完成加密握手")
         if isinstance(data, str):
             data = data.encode(self.encoding)
         elif isinstance(data, bytes):
@@ -175,7 +176,7 @@ class Server(NetworkBase, Builder):
 
     def receive(self):
         if not self.handshake_done or not self.aes_key:
-            raise Exception("没有完成加密握手")
+            raise HandshakeError("没有完成加密握手")
         raw_data = self._recv_raw()
         try:
             data = CryptoUtils.aes_decrypt(self.aes_key, raw_data, self.seq)
@@ -186,7 +187,8 @@ class Server(NetworkBase, Builder):
             self.seq += 1
             return data.decode(self.encoding)
         except Exception as e:
-            self.logger.error("服务端发送了不正确的数据包:", e)
+            self.logger.error("服务端发送了不正确的数据包: %s", e)
+            return ""#数据包格式不对哦，宝宝，只能return下""了
 
     def close(self):
         """销毁 AES 密钥"""

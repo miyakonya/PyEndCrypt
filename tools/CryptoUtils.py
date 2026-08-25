@@ -17,10 +17,10 @@ from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey, X
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 from cryptography.hazmat.backends import default_backend
+from .exceptions import *
 import struct
 import time
 import subprocess
-
 class CryptoUtils:
     TIMEOUT = 300   # 5分钟
     @staticmethod
@@ -77,7 +77,7 @@ class CryptoUtils:
         :return: 时间戳和原始数据
         """
         if len(data) < 12:
-            raise Exception("数据太短，无法提取时间戳")
+            raise DataFormatError("数据太短，无法提取时间戳")
 
         timestamp_bytes = data[:8]
         seq_bytes = data[8:12]
@@ -99,9 +99,9 @@ class CryptoUtils:
         current_time = int(time.time())
         diff = abs(current_time - timestamp)
         if seq != data_seq:
-            raise Exception("序列号校验失败！可能存在重放攻击！")
+            raise ReplayAttackError("序列号校验失败！可能存在重放攻击！")
         if diff > window:
-            raise Exception(f"时间戳验证失败！时间差:{diff}秒")
+            raise ReplayAttackError(f"时间戳验证失败！时间差:{diff}秒")
         return True
 
     @staticmethod
@@ -135,14 +135,11 @@ class CryptoUtils:
         cipher = AES.new(aes_key, AES.MODE_GCM, nonce=nonce)
         try:
             cipher_text = cipher.decrypt_and_verify(encrypted_data, tag)
-            timestamp, data, data_seq = CryptoUtils._unpack(cipher_text)
-            if CryptoUtils._verify(timestamp, seq, data_seq):
-                return data
-            else:
-                raise Exception("解密失败")
-        except BaseException as e:
-            raise Exception("AES-GCM 认证失败，数据可能被篡改:", e)
-
+        except Exception as e:
+            raise DecryptionError(f"AES-GCM 认证失败，数据可能被篡改: {e}") from e
+        timestamp, data, data_seq = CryptoUtils._unpack(cipher_text)
+        CryptoUtils._verify(timestamp, seq, data_seq)
+        return data
     @staticmethod
     def generate_cert_key(ca_cert: str, ca_key: str):
         """

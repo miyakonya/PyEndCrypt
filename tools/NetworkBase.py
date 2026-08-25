@@ -13,6 +13,7 @@ LICENSE file in the root directory of this source tree.
 
 import struct
 from Crypto.Random import get_random_bytes
+from .exceptions import *
 import random
 
 class NetworkBase:
@@ -27,7 +28,7 @@ class NetworkBase:
         :param encoding: 编码格式
         """
         if padding < 0 or padding > 2:
-            raise Exception("填充方式不存在")
+            raise PaddingError("填充方式不存在")
         self.encoding = encoding
         self.ssl_sock = None
         self.sock = None
@@ -48,16 +49,16 @@ class NetworkBase:
         """
         sock = self._get_socket()
         if n > self.MAX_SIZE:
-            raise ConnectionError("接收到了过大的数据包！")
+            raise PacketTooLargeError("接收到了过大的数据包！")
 
         if not self.ssl_sock and not self.sock:
-            raise ConnectionError("Socket没有初始化")
+            raise SocketNotInitializedError("Socket没有初始化")
         data = b''
         while (len(data)) < n:
             chunk = sock.recv(n - len(data))
             data += chunk
             if not chunk:
-                raise ConnectionError("连接已断开")
+                raise ConnectionLostError("连接已断开")
         return data
 
     def _add_padding(self, data: bytes) -> bytes:
@@ -91,10 +92,10 @@ class NetworkBase:
         :return: 去除填充完毕的数据
         """
         if len(data) < 4:
-            raise ValueError("数据太短，无法解析")
+            raise PaddingError("数据太短，无法解析")
         original_len = struct.unpack("!I", data[:4])[0]
         if 4 + original_len > len(data):
-            raise ValueError("原始长度超过数据总长！")
+            raise PaddingError("原始长度超过数据总长！")
         result = data[4:4 + original_len]
         return result
 
@@ -106,7 +107,7 @@ class NetworkBase:
         """
         sock = self._get_socket()
         if not self.ssl_sock and not self.sock:
-            raise ConnectionError("Socket没有初始化")
+            raise SocketNotInitializedError("Socket没有初始化")
         if isinstance(data, str):
             data = data.encode(self.encoding)
         elif isinstance(data, bytes):
@@ -115,7 +116,7 @@ class NetworkBase:
             data = str(data).encode(self.encoding)
         length = len(data)
         if length > self.MAX_SIZE:
-            raise ConnectionError("发送的数据包太大！")
+            raise PacketTooLargeError("发送的数据包太大！")
         header = struct.pack("!I", length)
         data = header + data
         sock.sendall(data)
@@ -126,18 +127,19 @@ class NetworkBase:
         :return: 接收到的数据
         """
         if not self.ssl_sock and not self.sock:
-            raise ConnectionError("Socket没有初始化")
+            raise SocketNotInitializedError("Socket没有初始化")
         try:
             # 接收数据总长度
             header = self._recv_exact(4)
             length = struct.unpack("!I", header)[0]
             body = self._recv_exact(length)
             if len(body) > self.MAX_SIZE:
-                raise ConnectionError("接收到了过大的数据包！")
+                raise PacketTooLargeError("接收到了过大的数据包！")
             return body
-        except BaseException as e:
-            raise ConnectionError(f"接收数据包失败:{e}")
-
+        except (PacketTooLargeError, ConnectionLostError, SocketNotInitializedError):
+            raise
+        except Exception as e:
+            raise ConnectionLostError(f"接收数据包失败: {e}") from e
     def close(self):
         if self.ssl_sock:
             self.ssl_sock.close()
