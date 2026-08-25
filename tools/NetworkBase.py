@@ -31,7 +31,6 @@ class NetworkBase:
         self.encoding = encoding
         self.ssl_sock = None
         self.sock = None
-        self.exchange_cert = False
         self.MAX_SIZE = 1024 * 1024 # 最大包大小为1MB
         self.padding = padding
         self.padding_size = 128 # 设定填充块大小为128字节

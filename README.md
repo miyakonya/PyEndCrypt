@@ -155,7 +155,6 @@ client.close()
 - `accept()`: 接受连接并完成握手
 - `send(data)`: 加密数据并发送
 - `receive()`: 接收数据并解密
-- `create_new_instance()`: 创建新的服务端实例
 - `close()`: 关闭连接
 
 ---
@@ -173,8 +172,6 @@ client.close()
 SSL 连接构建器<br>
 方法:
 - `Builder(self, cert: str, key: str, ca_cert: str, is_server)`: 创建构建器
-
----
 
 ---
 
@@ -204,7 +201,6 @@ PyEndCrypt/
 - ⚫ ~~添加客户端身份验证~~（已由TLS和mTLS替代）
 - ⚫ ~~将`print()`替换为日志记录系统~~（完成）
 - ⚫ ~~添加服务端自动生成证书和密钥返回给客户端~~（完成）
-- ⚫ ~~添加配置文件系统~~（完成）
 - 🟡 增加心跳机制
 - 🟡 从内存中销毁密钥
 - 🟡 添加客户端自动重连

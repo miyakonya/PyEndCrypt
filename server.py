@@ -188,20 +188,6 @@ class Server(NetworkBase, Builder):
         except Exception as e:
             self.logger.error("服务端发送了不正确的数据包:", e)
 
-    def create_new_instance(self):
-        """创建新的 Server 实例（用于多客户端）"""
-        return Server(
-            host=self.host,
-            port=self.port,
-            listen=0,  # 不监听
-            server_cert=self.server_cert,
-            server_key=self.server_key,
-            ca_cert=self.ca_cert,
-            ca_key=self.ca_key,
-            padding=self.padding,
-            encoding=self.encoding
-        )
-
     def close(self):
         """销毁 AES 密钥"""
         super().close()
