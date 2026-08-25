@@ -12,7 +12,7 @@ LICENSE file in the root directory of this source tree.
 # Python 3.14.7
 
 import struct
-from Crypto.Random import get_random_bytes
+from secrets import token_bytes
 from .exceptions import *
 import random
 
@@ -88,7 +88,7 @@ class NetworkBase:
             max_padding = min(256, self.MAX_SIZE - len(data))
             padding_len = random.randint(1, max_padding) if max_padding > 0 else 0
         if padding_len > 0:
-            data += get_random_bytes(padding_len)
+            data += token_bytes(padding_len)
         return data
 
     def _remove_padding(self, data: bytes) -> bytes:

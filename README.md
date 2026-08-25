@@ -1,6 +1,8 @@
 # PyEndCrypt
 用Python写的端到端加密工具，采用混合加密，对数据进行双重校验，使用简单，和平常使用socket套接字步骤差不多。
 
+本项目适合想了解密码学的开发人员，提供有ECC、kyber和AES加解密供研究。如果你想，可以根据下文[API](#api)进行二次开发。
+
 项目目前仍处于开发阶段，如果你想参与开发请看下文[工作清单](#工作清单)
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
@@ -27,13 +29,19 @@
 认证：mTLS<br>
 传输层：TLSv1.3<br>
 密钥交换阶段：ECC X25519 256位 / kyber 768位<br>
-数据加密：AES-GCM 128位<br>
+数据加密：AES-GCM 256位<br>
+
+> **⚠️ 加密算法风险警告**
+> 
+> kyber算法使用的库为`kyber-py`，虽然目前没有已知漏洞，
+> 但是官方文档已经给出明确警告：没有针对任何形式的侧信道攻击进行安全设计。
+> 这里只用于后量子密码学学习研究。
+> ***建议使用x25519算法***。
 
 ---
 
 ## ⚙️依赖安装
 ```bash
-pip install pycryptodome
 pip install cryptography
 pip install kyber-py
 ```
@@ -95,7 +103,7 @@ client.close()
     1：固定大小填充
     2：随机大小填充
 固定大小填充可以使数据包长度始终为128的倍数(由于使用TLSv1.3，实际大小会大一些)
-随机大小填充可以使数据包长度获得随机一个长度，范围: 1~(256和剩余最大可用大小间的最小值)
+随机大小填充可以使数据包增加一个随机长度，范围: 1~(256和剩余最大可用大小间的最小值)
 ```
 
 ---

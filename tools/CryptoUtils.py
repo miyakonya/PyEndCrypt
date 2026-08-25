@@ -11,13 +11,13 @@ LICENSE file in the root directory of this source tree.
 # coding: UTF-8
 # Python 3.14.7
 
-from Crypto.Cipher import AES
-from Crypto.Random import get_random_bytes
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey, X25519PublicKey
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 from cryptography.hazmat.backends import default_backend
 from kyber_py.ml_kem import ML_KEM_768
+from secrets import token_bytes
 from .exceptions import *
 import struct
 import time
@@ -66,7 +66,7 @@ class CryptoUtils:
     @staticmethod
     def generate_salt():
         """生成随机256位的随机盐"""
-        return get_random_bytes(32)
+        return token_bytes(32)
 
     @staticmethod
     def shared_key_derive_aes_key(shared_key: bytes, salt: bytes) -> bytes:
@@ -134,13 +134,13 @@ class CryptoUtils:
         :param aes_key: AES 私钥
         :param data: 要加密的数据
         :param seq: 序列号
-        :return: 已加密的数据
+        :return: 已加密的数据(密文已包含tag)
         """
-        nonce = get_random_bytes(12)
+        nonce = token_bytes(12)
         packed_data = CryptoUtils._pack(data, seq)
-        cipher = AES.new(aes_key, AES.MODE_GCM, nonce=nonce)
-        cipher_text, tag = cipher.encrypt_and_digest(packed_data)
-        return nonce + cipher_text + tag
+        aesgcm = AESGCM(aes_key)
+        ciphertext = aesgcm.encrypt(nonce, packed_data, None)
+        return nonce + ciphertext
 
     @staticmethod
     def aes_decrypt(aes_key: bytes, data: bytes, seq: int) -> bytes:
@@ -153,14 +153,14 @@ class CryptoUtils:
         """
         # 从数据中分离nonce和tag
         nonce = data[:12]
-        tag = data[-16:]
-        encrypted_data = data[12:-16]
-        cipher = AES.new(aes_key, AES.MODE_GCM, nonce=nonce)
+        encrypted_data = data[12:]
         try:
-            cipher_text = cipher.decrypt_and_verify(encrypted_data, tag)
+            aesgcm = AESGCM(aes_key)
+            # 这里会自动验证tag
+            ciphertext = aesgcm.decrypt(nonce, encrypted_data, None)
         except Exception as e:
             raise DecryptionError(f"AES-GCM 认证失败，数据可能被篡改: {e}") from e
-        timestamp, data, data_seq = CryptoUtils._unpack(cipher_text)
+        timestamp, data, data_seq = CryptoUtils._unpack(ciphertext)
         CryptoUtils._verify(timestamp, seq, data_seq)
         return data
     @staticmethod
