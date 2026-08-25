@@ -25,7 +25,7 @@ class Client(NetworkBase, Builder):
         创建客户端
         :param host: 主机
         :param port: 端口
-        :param ca_cert: 客户端证书文件
+        :param ca_cert: CA 证书文件
         """
         NetworkBase.__init__(self, 0, "utf-8")
         self.logger = Logger(__name__).getLogger()
@@ -43,40 +43,50 @@ class Client(NetworkBase, Builder):
         self.encoding = None
         self.padding = None
         self.pub = None
+        self.asy_mod = None
 
     def _negotiate(self):
         """预先协商"""
         self.logger.info("开始和服务端协商")
         self.encoding = self._recv_raw().decode("utf-8")
         try:
+            self.asy_mod = self._recv_raw().decode(self.encoding)
             self.padding = int(self._recv_raw().decode(self.encoding))
         except ValueError:
             self.logger.error("服务端发送的填充方式不正确")
             raise ValueError("服务端发送的填充方式不正确")
         self._send_raw("OK")
-        self.logger.info(f"协商完毕，填充方式: {self.encoding}\t编码格式: {self.padding}")
+        self.logger.info(f"协商完毕，非对称加密算法: {self.asy_mod}\t填充方式: {self.padding}\t编码格式: {self.encoding}")
 
     def _handshake(self):
         """建立加密连接"""
         self.logger.info("开始加密握手")
-        private_key, client_public_bytes = CryptoUtils.generate_x25519_keypair()
-        self.logger.info(f"生成 X25519 临时公钥，长度{len(client_public_bytes)}字节")
-        self._send_raw(client_public_bytes)
-        self.logger.info("发送临时公钥给服务器")
-        server_public_bytes = self._recv_raw()
-        if not server_public_bytes or len(server_public_bytes) != 32:
-            self.logger.error("接收服务器临时公钥失败")
-            raise HandshakeError("接收服务器临时公钥失败")
-        self.logger.info(f"接收到服务器临时公钥，长度{len(server_public_bytes)}字节")
-        # 根据临时私钥和服务端公钥派生出共享密钥
-        shared_key = CryptoUtils.x25519_derive_shared_key(
-            private_key,
-            server_public_bytes
-        )
+        if self.asy_mod == "x25519":
+            private_key, client_public_bytes = CryptoUtils.generate_x25519_keypair()
+            self.logger.info(f"生成 X25519 临时公钥，长度{len(client_public_bytes)}字节")
+            self._send_raw(client_public_bytes)
+            self.logger.info("发送临时公钥给服务器")
+            server_public_bytes = self._recv_raw()
+            if not server_public_bytes or len(server_public_bytes) != 32:
+                self.logger.error("接收服务器临时公钥失败")
+                raise HandshakeError("接收服务器临时公钥失败")
+            salt = self._recv_raw()
+            self.logger.info(f"接收到服务器临时公钥，长度{len(server_public_bytes)}字节")
+            # 根据临时私钥和服务端公钥派生出共享密钥
+            shared_key = CryptoUtils.x25519_derive_shared_key(
+                private_key,
+                server_public_bytes
+            )
+        else:
+            public_key = self._recv_raw()
+            salt = self._recv_raw()
+            self.logger.info(f"获取到 kyber 公钥，长度{len(public_key)}字节")
+            shared_key, ciphertext = CryptoUtils.encaps(public_key)
+            self._send_raw(ciphertext)
+            self.logger.info("发送密文给服务端")
         # 根据共享密钥派生出 AES 密钥
-        self.aes_key = CryptoUtils.shared_key_derive_aes_key(shared_key)
+        self.aes_key = CryptoUtils.shared_key_derive_aes_key(shared_key, salt)
         self.logger.info(f"AES 密钥派生成功，共{len(self.aes_key)}字节")
-        del private_key
         self._send_raw(b"Client Hello")
         response = self._recv_raw()
         if response == b"Server Hello":

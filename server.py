@@ -22,6 +22,7 @@ class Server(NetworkBase, Builder):
                  server_key: str,
                  ca_cert:str,
                  ca_key: str,
+                 asy_mod: str,
                  padding: int = 0,
                  encoding: str = "utf-8"):
         """
@@ -32,6 +33,9 @@ class Server(NetworkBase, Builder):
         :param server_key: 服务端私钥文件
         :param ca_cert: CA 证书文件
         :param ca_key: CA 密钥文件
+        :param asy_mod: 非对称加密算法
+        :param padding: 数据包填充级别
+        :param encoding: 编码格式
         """
         NetworkBase.__init__(self, padding, encoding)
         Builder.__init__(self, server_cert, server_key, ca_cert, True)
@@ -51,41 +55,56 @@ class Server(NetworkBase, Builder):
         self.port = port
         self.server_cert = server_cert
         self.server_key = server_key
+        self.asy_mod = asy_mod
+        if self.asy_mod not in ["kyber", "x25519"]:
+            self.logger.error("不支持的非对称加密算法")
+            raise Exception("不支持的非对称加密算法")
 
     def _negotiate(self):
         """预先协商"""
         self.logger.info("开始和客户端协商")
         self._send_raw(self.encoding.encode("utf-8"))
+        self._send_raw(self.asy_mod)
         self._send_raw(self.padding)
         response = self._recv_raw().decode(self.encoding)
         if response == "OK":
-            self.logger.info(f"协商完毕，填充方式: {self.encoding}\t编码格式: {self.padding}")
+            self.logger.info(f"协商完毕，非对称加密算法: {self.asy_mod}\t填充方式: {self.encoding}\t编码格式: {self.padding}")
         else:
             self.logger.error("协商失败")
             raise ConnectionError("协商失败")
 
     def _handshake(self):
         """加密握手实现"""
-        self.logger.info("开始加密握手")
-        # 每次连接单独生成新的临时公私钥
-        private_key, public_key = CryptoUtils.generate_x25519_keypair()
-        client_public_bytes = self._recv_raw()
-        if not client_public_bytes or len(client_public_bytes) != 32:
-            self.logger.error("接收客户端临时公钥失败")
-            raise HandshakeError("接收客户端临时公钥失败")
         try:
-            self.logger.info(f"接收到客户端临时公钥，长度{len(client_public_bytes)}字节")
-            self._send_raw(public_key)
-            self.logger.info("发送临时公钥给客户端")
-            # 根据临时私钥和客户端公钥派生出共享密钥
-            shared_key = CryptoUtils.x25519_derive_shared_key(
-                private_key,
-                client_public_bytes
-            )
+            self.logger.info("开始加密握手")
+            salt = CryptoUtils.generate_salt()
+            # 每次连接单独生成新的临时公私钥
+            if self.asy_mod == "x25519":
+                private_key, public_key = CryptoUtils.generate_x25519_keypair()
+                client_public_bytes = self._recv_raw()
+                if not client_public_bytes or len(client_public_bytes) != 32:
+                    self.logger.error("接收客户端临时公钥失败")
+                    raise HandshakeError("接收客户端临时公钥失败")
+                self.logger.info(f"接收到客户端临时公钥，长度{len(client_public_bytes)}字节")
+                self._send_raw(public_key)
+                self._send_raw(salt)
+                self.logger.info("发送临时公钥给客户端")
+                # 根据临时私钥和客户端公钥派生出共享密钥
+                shared_key = CryptoUtils.x25519_derive_shared_key(
+                    private_key,
+                    client_public_bytes
+                )
+            else:
+                public_key, private_key = CryptoUtils.generate_kyber_keypair()
+                self._send_raw(public_key)
+                self._send_raw(salt)
+                self.logger.info(f"发送 kyber 公钥给客户端，长度{len(public_key)}字节")
+                ciphertext = self._recv_raw()
+                self.logger.info(f"接收到客户端的密文，长度{len(ciphertext)}字节")
+                shared_key = CryptoUtils.decaps(private_key, ciphertext)
             # 根据公钥密钥派生出 AES 密钥
-            self.aes_key = CryptoUtils.shared_key_derive_aes_key(shared_key)
+            self.aes_key = CryptoUtils.shared_key_derive_aes_key(shared_key, salt)
             self.logger.info(f"AES 密钥派生成功，共{len(self.aes_key)}字节")
-            del private_key
             response = self._recv_raw()
             if response == b"Client Hello":
                 self._send_raw(b"Server Hello")
