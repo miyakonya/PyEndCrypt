@@ -8,7 +8,8 @@
 ---
 
 ## 💡特点
-- 端到端加密，X25519 + AES 混合加密。
+- 端到端加密，X25519 / kyber + AES 混合加密。
+- 非对称加密可自选x25519或kyber。
 - 服务端和客户端强制加密，没有明文传输。
 - 自动握手。
 - 使用简单，代码简洁。
@@ -25,7 +26,7 @@
 ## 🔐加密方案
 认证：mTLS<br>
 传输层：TLSv1.3<br>
-密钥交换阶段：ECC X25519 256位<br>
+密钥交换阶段：ECC X25519 256位 / kyber 768位<br>
 数据加密：AES-GCM 128位<br>
 
 ---
@@ -34,6 +35,7 @@
 ```bash
 pip install pycryptodome
 pip install cryptography
+pip install kyber-py
 ```
 
 ---
@@ -48,6 +50,7 @@ key = "" # 服务端密钥路径
 ca_crt = "" # CA 证书路径
 ca_key = "" # CA 密钥路径
 padding = 0 # 数据包填充级别
+asy_mod = ""    # 非对称加密算法("x25519"或"kyber")
 
 server = Server("127.0.0.1",
                 5555,
@@ -55,6 +58,7 @@ server = Server("127.0.0.1",
                 key,
                 ca_crt, 
                 ca_key, 
+                asy_mod,
                 padding)
 server.accept()
 server.send("Hello From Server")
@@ -80,6 +84,19 @@ client.close()
 ```
 
 关于各个证书和密钥，如果是测试环境，可以使用`tools/generator.py`一键生成。
+
+---
+
+## 数据包伪造
+通过设定padding参数开启数据包大小伪造，其原理是在密文末尾填充无意义垃圾数据，共两个级别:
+```text
+数据包填充级别:
+    0：不填充
+    1：固定大小填充
+    2：随机大小填充
+固定大小填充可以使数据包长度始终为128的倍数(由于使用TLSv1.3，实际大小会大一些)
+随机大小填充可以使数据包长度获得随机一个长度，范围: 1~(256和剩余最大可用大小间的最小值)
+```
 
 ---
 
@@ -123,6 +140,10 @@ client.close()
 方法:
 - `generate_x25519_keypair()`: 生成 X25519 临时密钥对
 - `x25519_derive_shared_key(private_key: X25519PrivateKey, peer_public_bytes: bytes)`: 用 X25519 密钥派生出共享密钥
+- `generate_kyber_keypair()`: 生成 kyber 密钥对
+- `encaps(public_key: bytes)`: 用 kyber 公钥封装共享密钥
+- `decaps(private_key: bytes, ciphertext: bytes)`: 用 kyber 私钥解封装共享密钥
+- `generate_salt()`: 生成256位随机盐值
 - `shared_key_derive_aes_key(shared_key: bytes)`: 从共享密钥中派生出 AES 密钥
 - `_pack(data: bytes, seq: int)`: 将8字节时间戳和4字节序列号打包进数据中
 - `_unpack(data: bytes)`: 解包数据
