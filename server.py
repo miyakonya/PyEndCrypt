@@ -18,7 +18,6 @@ import gc
 class Server(NetworkBase, Builder):
     def __init__(self, host: str,
                  port: int,
-                 listen: int,
                  server_cert: str,
                  server_key: str,
                  ca_cert:str,
@@ -33,68 +32,37 @@ class Server(NetworkBase, Builder):
         :param server_key: 服务端私钥文件
         :param ca_cert: CA 证书文件
         :param ca_key: CA 密钥文件
-        :param padding: 设定数据包填充级别
-        :param encoding: 编码格式
         """
         NetworkBase.__init__(self, padding, encoding)
         Builder.__init__(self, server_cert, server_key, ca_cert, True)
         self.logger = Logger(__name__).getLogger()
-        if listen > 0:
-            self.listen_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            self.listen_sock.bind((host, port))
-            self.listen_sock.listen(listen)
-        else:
-            self.listen_sock = None
+        self.listen_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.listen_sock.bind((host, port))
+        self.listen_sock.listen(1)
         self.conn = None
         self.addr = None
         self.aes_key = None
         self.handshake_done = False
         self.seq = 1
         self.encoding = encoding
+        self.padding = padding
         self.ca_key = ca_key
         self.host = host
         self.port = port
         self.server_cert = server_cert
         self.server_key = server_key
 
-    def handle_client(self, conn, addr):
-        """
-        处理已连接的客户端（用于多客户端场景）
-        :param conn: 已建立的 socket 连接
-        :param addr: 客户端地址
-        """
-        self.conn = conn
-        self.addr = addr
-        self.sock = conn
-
-        self.seq = 1
-        self.handshake_done = False
-        self.aes_key = None
-
-        self.logger.info(f"开始处理客户端 {addr}")
-
-        try:
-            self._handshake()
-            self.logger.info("准备向客户端发送证书密钥文件")
-
-            g = Generator(self.ca_cert, self.ca_key)
-            client_key, path = g.generate_key()
-            client_cert = g.generate_cert(path)
-            self.send(client_key)
-            self.send(client_cert)
-            self.logger.info("证书和密钥已发送")
-
-            self.sock.close()
-            self.sock = None
-            self.conn = None
-            self.logger.info("证书分发完成")
-
-            self.logger.info(f"客户端 {addr} 处理完成")
-            return self.sock, self.addr
-
-        except Exception as e:
-            self.logger.error(f"处理客户端 {addr} 错误: {e}")
-            raise
+    def _negotiate(self):
+        """预先协商"""
+        self.logger.info("开始和客户端协商")
+        self._send_raw(self.encoding.encode("utf-8"))
+        self._send_raw(self.padding)
+        response = self._recv_raw().decode(self.encoding)
+        if response == "OK":
+            self.logger.info(f"协商完毕，填充方式: {self.encoding}\t编码格式: {self.padding}")
+        else:
+            self.logger.error("协商失败")
+            raise ConnectionError("协商失败")
 
     def _handshake(self):
         """加密握手实现"""
@@ -103,6 +71,7 @@ class Server(NetworkBase, Builder):
         private_key, public_key = CryptoUtils.generate_x25519_keypair()
         client_public_bytes = self._recv_raw()
         if not client_public_bytes or len(client_public_bytes) != 32:
+            self.logger.error("接收客户端临时公钥失败")
             raise HandshakeError("接收客户端临时公钥失败")
         try:
             self.logger.info(f"接收到客户端临时公钥，长度{len(client_public_bytes)}字节")
@@ -123,6 +92,7 @@ class Server(NetworkBase, Builder):
                 self.handshake_done = True
                 self.logger.info("握手成功，加密通信建立")
             else:
+                self.logger.error("握手失败")
                 raise HandshakeError("握手失败")
         except Exception as e:
             self.logger.error(f"握手失败: {e}")
@@ -134,6 +104,7 @@ class Server(NetworkBase, Builder):
         self.conn, self.addr = self.listen_sock.accept()
         self.logger.info(f"{self.addr[0]}:{self.addr[1]} 连接到本服务器")
         self.sock = self.conn
+        self._negotiate()
         self.logger.info("===== 预先握手开始 =====")
         self._handshake()
         self.logger.info("===== 预先握手结束 =====")
@@ -148,7 +119,7 @@ class Server(NetworkBase, Builder):
         # 关闭普通套接字，开始使用 SSL 套接字进行正式通信
         self.conn.close()
         self.conn = None
-        self.sock = None
+        self.sock = None    # 设为None，以便父类能获取正确的 SSL 套接字
         self.conn, self.addr = self.listen_sock.accept()
         self.ssl_sock = self.context.wrap_socket(self.conn, server_side=True)
         self.logger.info("SSL 加密完毕")
@@ -160,11 +131,7 @@ class Server(NetworkBase, Builder):
     def send(self, data):
         if not self.handshake_done or not self.aes_key:
             raise HandshakeError("没有完成加密握手")
-        if isinstance(data, str):
-            data = data.encode(self.encoding)
-        elif isinstance(data, bytes):
-            pass
-        else:
+        if not isinstance(data, bytes):
             data = str(data).encode(self.encoding)
         if self.padding != 0:
             data = self._add_padding(data)
@@ -176,6 +143,7 @@ class Server(NetworkBase, Builder):
 
     def receive(self):
         if not self.handshake_done or not self.aes_key:
+            self.logger.error("没有完成加密握手")
             raise HandshakeError("没有完成加密握手")
         raw_data = self._recv_raw()
         try:

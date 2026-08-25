@@ -20,18 +20,14 @@ import gc
 class Client(NetworkBase, Builder):
     def __init__(self, host: str,
                  port: int,
-                 ca_cert: str,
-                 padding: int = 0,
-                 encoding: str = "utf-8"):
+                 ca_cert: str):
         """
         创建客户端
         :param host: 主机
         :param port: 端口
         :param ca_cert: 客户端证书文件
-        :param padding: 设定数据包填充级别
-        :param encoding: 编码格式
         """
-        NetworkBase.__init__(self, padding, encoding)
+        NetworkBase.__init__(self, 0, "utf-8")
         self.logger = Logger(__name__).getLogger()
         self.ca_cert = ca_cert
         self.ssl_sock = None
@@ -44,8 +40,21 @@ class Client(NetworkBase, Builder):
         self.nonce = None
         self.handshake_done = False
         self.seq = 1
-        self.encoding = encoding
+        self.encoding = None
+        self.padding = None
         self.pub = None
+
+    def _negotiate(self):
+        """预先协商"""
+        self.logger.info("开始和服务端协商")
+        self.encoding = self._recv_raw().decode("utf-8")
+        try:
+            self.padding = int(self._recv_raw().decode(self.encoding))
+        except ValueError:
+            self.logger.error("服务端发送的填充方式不正确")
+            raise ValueError("服务端发送的填充方式不正确")
+        self._send_raw("OK")
+        self.logger.info(f"协商完毕，填充方式: {self.encoding}\t编码格式: {self.padding}")
 
     def _handshake(self):
         """建立加密连接"""
@@ -56,6 +65,7 @@ class Client(NetworkBase, Builder):
         self.logger.info("发送临时公钥给服务器")
         server_public_bytes = self._recv_raw()
         if not server_public_bytes or len(server_public_bytes) != 32:
+            self.logger.error("接收服务器临时公钥失败")
             raise HandshakeError("接收服务器临时公钥失败")
         self.logger.info(f"接收到服务器临时公钥，长度{len(server_public_bytes)}字节")
         # 根据临时私钥和服务端公钥派生出共享密钥
@@ -73,12 +83,14 @@ class Client(NetworkBase, Builder):
             self.handshake_done = True
             self.logger.info("握手成功，加密通信建立")
         else:
+            self.logger.error("握手失败")
             raise HandshakeError("握手失败")
 
     def connect(self):
         # 暂时使用普通套接字连接服务端获取证书密钥
         self.sock.connect((self.host, self.port))
         self.logger.info("连接成功")
+        self._negotiate()
         self.logger.info("===== 预先握手开始 =====")
         self._handshake()
         self.logger.info("===== 预先握手结束 =====")
@@ -111,7 +123,7 @@ class Client(NetworkBase, Builder):
         self.ssl_sock = self.context.wrap_socket(self.sock, server_hostname=self.host)
         self.ssl_sock.settimeout(300)
         self.ssl_sock.connect((self.host, self.port))
-        self.sock = None
+        self.sock = None    # 设为None，以便父类能获取正确的 SSL 套接字
         self.logger.info("SSL 加密完毕")
         self.logger.info("===== 端到端加密握手开始 =====")
         self._handshake()
@@ -121,11 +133,7 @@ class Client(NetworkBase, Builder):
     def send(self, data):
         if not self.handshake_done or not self.aes_key:
             raise HandshakeError("没有完成加密握手")
-        if isinstance(data, str):
-            data = data.encode(self.encoding)
-        elif isinstance(data, bytes):
-            pass
-        else:
+        if not isinstance(data, bytes):
             data = str(data).encode(self.encoding)
         if self.padding != 0:
             data = self._add_padding(data)

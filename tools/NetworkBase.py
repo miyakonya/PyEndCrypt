@@ -36,6 +36,12 @@ class NetworkBase:
         self.padding = padding
         self.padding_size = 128 # 设定填充块大小为128字节
 
+    def setEncoding(self, encoding: str):
+        self.encoding = encoding
+
+    def setPadding(self, padding: int):
+        self.padding = padding
+
     def _get_socket(self):
         if self.ssl_sock:
             return self.ssl_sock
@@ -105,9 +111,9 @@ class NetworkBase:
         :param data:要发送的数据
         :return: 无
         """
-        sock = self._get_socket()
         if not self.ssl_sock and not self.sock:
             raise SocketNotInitializedError("Socket没有初始化")
+        sock = self._get_socket()
         if isinstance(data, str):
             data = data.encode(self.encoding)
         elif isinstance(data, bytes):

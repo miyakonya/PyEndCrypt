@@ -25,7 +25,7 @@
 ## 🔐加密方案
 认证：mTLS<br>
 传输层：TLSv1.3<br>
-密钥交换阶段：X25519 256位<br>
+密钥交换阶段：ECC X25519 256位<br>
 数据加密：AES-GCM 128位<br>
 
 ---
@@ -51,7 +51,6 @@ padding = 0 # 数据包填充级别
 
 server = Server("127.0.0.1",
                 5555,
-                listen,
                 crt,
                 key,
                 ca_crt, 
@@ -61,7 +60,6 @@ server.accept()
 server.send("Hello From Server")
 data = server.receive()
 print(data)
-server.accept()
 server.close()
 ```
 
@@ -70,12 +68,10 @@ server.close()
 from client import Client
 
 ca_crt = "" # CA 证书路径
-padding = 0 # 数据包填充级别
 
 client = Client("127.0.0.1",
                 5555,
-                ca_crt,
-                padding)
+                ca_crt)
 client.connect()
 data = client.receive()
 print(data)
@@ -140,6 +136,7 @@ client.close()
 加密客户端<br>
 方法:
 - `Client(self, host: str, port: int, ca_cert: str, padding: int = 0, encoding: str = "utf-8")`: 创建客户端
+- `_negotiate()`: 预先协商
 - `_handshake()`: 建立加密握手
 - `connect()`: 连接服务器并完成握手
 - `send(data)`: 加密数据并发送
@@ -152,6 +149,7 @@ client.close()
 加密服务端<br>
 方法:
 - `Server(self, host: str, port: int, listen: int, server_cert: str, server_key: str, ca_cert:str, ca_key: str, padding: int = 0, encoding: str = "utf-8")`: 创建服务端
+- `_negotiate()`: 预先协商
 - `_handshake()`: 建立加密握手
 - `accept()`: 接受连接并完成握手
 - `send(data)`: 加密数据并发送
@@ -190,6 +188,7 @@ PyEndCrypt/
     ├── CredentialProvisioner.py    # 客户端证书和密钥生成器
     ├── SSLBuilder.py    # SSL 连接构建器
     ├── generator.py     # 证书密钥全生成器
+    ├── exceptions.py    # 所有异常的基类
     └── __init__.py
 ```
 
@@ -202,10 +201,10 @@ PyEndCrypt/
 - ⚫ ~~添加客户端身份验证~~（已由TLS和mTLS替代）
 - ⚫ ~~将`print()`替换为日志记录系统~~（完成）
 - ⚫ ~~添加服务端自动生成证书和密钥返回给客户端~~（完成）
+- ⚫ ~~优化异常处理~~（完成）
 - 🟡 增加心跳机制
 - 🟡 从内存中销毁密钥
 - 🟡 添加客户端自动重连
-- 🟢 优化异常处理
 
 ---
 
