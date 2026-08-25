@@ -12,6 +12,7 @@ from tools.NetworkBase import NetworkBase
 from tools.CryptoUtils import CryptoUtils
 from tools.Logger import Logger
 from tools.SSLBuilder import Builder
+from tools.exceptions import HandshakeError
 from shutil import rmtree
 import os
 import gc
@@ -55,7 +56,7 @@ class Client(NetworkBase, Builder):
         self.logger.info("发送临时公钥给服务器")
         server_public_bytes = self._recv_raw()
         if not server_public_bytes or len(server_public_bytes) != 32:
-            raise Exception("接收服务器临时公钥失败")
+            raise HandshakeError("接收服务器临时公钥失败")
         self.logger.info(f"接收到服务器临时公钥，长度{len(server_public_bytes)}字节")
         # 根据临时私钥和服务端公钥派生出共享密钥
         shared_key = CryptoUtils.x25519_derive_shared_key(
@@ -72,7 +73,7 @@ class Client(NetworkBase, Builder):
             self.handshake_done = True
             self.logger.info("握手成功，加密通信建立")
         else:
-            raise Exception("握手失败")
+            raise HandshakeError("握手失败")
 
     def connect(self):
         # 暂时使用普通套接字连接服务端获取证书密钥
@@ -84,7 +85,7 @@ class Client(NetworkBase, Builder):
         self.client_key = self.receive()
         self.client_cert = self.receive()
         if not self.client_cert or not self.client_key:
-            raise Exception("无法接收到证书密钥")
+            raise HandshakeError("无法接收到证书密钥")
         self.logger.info(f"密钥接收完毕，共{len(self.client_key)}字节")
         self.logger.info(f"证书接收完毕，共{len(self.client_cert)}字节")
         os.mkdir("tmp_cert_key")
@@ -93,7 +94,7 @@ class Client(NetworkBase, Builder):
         with open("tmp_cert_key/client.crt", "w+") as cw:
             cw.write(self.client_cert)
         if not self.client_cert or not self.client_key:
-            raise Exception("无法接收到证书和密钥")
+            raise HandshakeError("无法接收到证书和密钥")
         # 初始化 SSL 构建器
         Builder.__init__(self,
                          "tmp_cert_key/client.crt",
@@ -119,7 +120,7 @@ class Client(NetworkBase, Builder):
 
     def send(self, data):
         if not self.handshake_done or not self.aes_key:
-            raise Exception("没有完成加密握手")
+            raise HandshakeError("没有完成加密握手")
         if isinstance(data, str):
             data = data.encode(self.encoding)
         elif isinstance(data, bytes):
@@ -137,7 +138,7 @@ class Client(NetworkBase, Builder):
 
     def receive(self):
         if not self.handshake_done or not self.aes_key:
-            raise Exception("没有完成加密握手")
+            raise HandshakeError("没有完成加密握手")
         raw_data = self._recv_raw()
         try:
             data = CryptoUtils.aes_decrypt(self.aes_key, raw_data, self.seq)
@@ -148,7 +149,8 @@ class Client(NetworkBase, Builder):
             self.seq += 1
             return data.decode(self.encoding)
         except Exception as e:
-            self.logger.error("服务端发送了不正确的数据包:", e)
+            self.logger.error(f"服务端发送了不正确的数据包:{e}")
+            return ""
 
     def close(self):
         """销毁 AES 密钥"""

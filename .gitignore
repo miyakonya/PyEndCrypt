@@ -220,3 +220,8 @@ __marimo__/
 
 keys/*
 WebChat/keys/*
+
+#env and venv
+.venv
+.env
+
