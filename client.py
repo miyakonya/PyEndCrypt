@@ -36,7 +36,6 @@ class Client(NetworkBase, Builder):
         self.client_key = None
         self.host = host
         self.port = port
-        self.aes_key = None
         self.nonce = None
         self.handshake_done = False
         self.seq = 1
@@ -44,49 +43,36 @@ class Client(NetworkBase, Builder):
         self.padding = None
         self.pub = None
         self.asy_mod = None
+        self.server_public_key = None
+        self.private_key = None
+        self.refresh_count = 5
+        self.is_refreshing = False
+        self.pending_refresh = False
 
     def _negotiate(self):
         """预先协商"""
         self.logger.info("开始和服务端协商")
         self.encoding = self._recv_raw().decode("utf-8")
         try:
-            self.asy_mod = self._recv_raw().decode(self.encoding)
             self.padding = int(self._recv_raw().decode(self.encoding))
         except ValueError:
             self.logger.error("服务端发送的填充方式不正确")
             raise ValueError("服务端发送的填充方式不正确")
         self._send_raw("OK")
-        self.logger.info(f"协商完毕，非对称加密算法: {self.asy_mod}\t填充方式: {self.padding}\t编码格式: {self.encoding}")
+        self.logger.info(f"协商完毕，填充方式: {self.padding}\t编码格式: {self.encoding}")
 
     def _handshake(self):
         """建立加密连接"""
         self.logger.info("开始加密握手")
-        if self.asy_mod == "x25519":
-            private_key, client_public_bytes = CryptoUtils.generate_x25519_keypair()
-            self.logger.info(f"生成 X25519 临时公钥，长度{len(client_public_bytes)}字节")
-            self._send_raw(client_public_bytes)
-            self.logger.info("发送临时公钥给服务器")
-            server_public_bytes = self._recv_raw()
-            if not server_public_bytes or len(server_public_bytes) != 32:
-                self.logger.error("接收服务器临时公钥失败")
-                raise HandshakeError("接收服务器临时公钥失败")
-            salt = self._recv_raw()
-            self.logger.info(f"接收到服务器临时公钥，长度{len(server_public_bytes)}字节")
-            # 根据临时私钥和服务端公钥派生出共享密钥
-            shared_key = CryptoUtils.x25519_derive_shared_key(
-                private_key,
-                server_public_bytes
-            )
-        else:
-            public_key = self._recv_raw()
-            salt = self._recv_raw()
-            self.logger.info(f"获取到 kyber 公钥，长度{len(public_key)}字节")
-            shared_key, ciphertext = CryptoUtils.encaps(public_key)
-            self._send_raw(ciphertext)
-            self.logger.info("发送密文给服务端")
-        # 根据共享密钥派生出 AES 密钥
-        self.aes_key = CryptoUtils.shared_key_derive_aes_key(shared_key, salt)
-        self.logger.info(f"AES 密钥派生成功，共{len(self.aes_key)}字节")
+        self.private_key, public_key = CryptoUtils.generate_keypair()
+        self.logger.info(f"生成临时公钥，长度{len(public_key)}字节")
+        self._send_raw(public_key)
+        self.logger.info("发送临时公钥给服务器")
+        self.server_public_key = self._recv_raw()
+        if not self.server_public_key or len(self.server_public_key) != 32:
+            self.logger.error("接收服务器临时公钥失败")
+            raise HandshakeError("接收服务器临时公钥失败")
+        self.logger.info(f"接收到服务器临时公钥，长度{len(self.server_public_key)}字节")
         self._send_raw(b"Client Hello")
         response = self._recv_raw()
         if response == b"Server Hello":
@@ -140,44 +126,81 @@ class Client(NetworkBase, Builder):
         self.logger.info("===== 端到端加密握手结束 =====")
         self.logger.info("===== 预先验证全部完成 =====")
 
+    def _refresh_keypair(self):
+        if self.is_refreshing:
+            self.logger.warning("密钥刷新进行中，跳过")
+            return
+        self.is_refreshing = True
+        try:
+            self.logger.info("开始重新交换密钥对")
+            self._send_raw(b"REFRESH_KEY")
+            # 等待服务端确认
+            response = self._recv_raw()
+            if response != b"REFRESH_ACK":
+                raise Exception(f"服务端未确认刷新: {response[:20]}...")
+            # 执行握手
+            self._handshake()
+            self.logger.info("密钥刷新完成")
+            self.pending_refresh = False
+        except Exception as e:
+            self.logger.error(f"密钥刷新失败: {e}")
+            raise
+        finally:
+            self.is_refreshing = False
+
     def send(self, data):
-        if not self.handshake_done or not self.aes_key:
+        if not self.handshake_done:
             raise HandshakeError("没有完成加密握手")
+        # 如果有待处理的刷新，先执行刷新
+        if self.pending_refresh and not self.is_refreshing:
+            self.logger.info("执行待处理的密钥刷新")
+            self._refresh_keypair()
+            self.refresh_count += 5
+            self.pending_refresh = False
         if not isinstance(data, bytes):
             data = str(data).encode(self.encoding)
         if self.padding != 0:
             data = self._add_padding(data)
-        edata = CryptoUtils.aes_encrypt(self.aes_key, data, self.seq)
+        edata = CryptoUtils.aes_encrypt(self.server_public_key, data, self.seq)
         # 发送已加密的数据
         self._send_raw(edata)
         self.logger.info(f"当前序列号: {self.seq}")
         self.logger.info(f"[Client]->[Server]: 发送{len(data)}字节")
         self.seq += 1
+        if self.seq > self.refresh_count:
+            self.pending_refresh = False
 
     def receive(self):
-        if not self.handshake_done or not self.aes_key:
+        if not self.handshake_done:
             raise HandshakeError("没有完成加密握手")
+        if self.pending_refresh and not self.is_refreshing:
+            self._refresh_keypair()
+            self.refresh_count += 5
+            self.pending_refresh = False
         raw_data = self._recv_raw()
+        if raw_data == b"REFRESH_KEY":
+            self.logger.info("收到服务端刷新请求")
+            self._send_raw(b"REFRESH_ACK")
+            self._handshake()
+            self.pending_refresh = False
+            self.logger.info("密钥刷新完成")
+            raw_data = self._recv_raw()
         try:
-            data = CryptoUtils.aes_decrypt(self.aes_key, raw_data, self.seq)
+            data = CryptoUtils.aes_decrypt(raw_data, self.seq, self.private_key)
             if self.padding != 0:
                 data = self._remove_padding(data)
             self.logger.info(f"当前序列号: {self.seq}")
             self.logger.info(f"[Server]->[Client]: 接收{len(data)}字节")
             self.seq += 1
+            if self.seq > self.refresh_count:
+                self.pending_refresh = True
             return data.decode(self.encoding)
         except Exception as e:
             self.logger.error(f"服务端发送了不正确的数据包:{e}")
             return ""
 
     def close(self):
-        """销毁 AES 密钥"""
         super().close()
-        if self.aes_key:
-            ba = bytearray(self.aes_key)
-            ba[:] = b"\x00" * len(ba)
-            del ba
-            self.aes_key = None
         self.seq = 0
         gc.collect()
         gc.collect()

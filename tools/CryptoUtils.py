@@ -16,7 +16,6 @@ from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey, X
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 from cryptography.hazmat.backends import default_backend
-from kyber_py.ml_kem import ML_KEM_768
 from secrets import token_bytes
 from .exceptions import *
 import struct
@@ -26,10 +25,10 @@ import subprocess
 class CryptoUtils:
     TIMEOUT = 300   # 5分钟
     @staticmethod
-    def generate_x25519_keypair():
+    def generate_keypair():
         """
-        生成 x25519 临时密钥对
-        :return: x25519 密钥对
+        生成 临时密钥对
+        :return: 密钥对
         """
         private_key = X25519PrivateKey.generate()
         public_key = private_key.public_key()
@@ -38,30 +37,14 @@ class CryptoUtils:
             format=serialization.PublicFormat.Raw
         )
         return private_key, public_bytes
-    
+
     @staticmethod
-    def x25519_derive_shared_key(private_key: X25519PrivateKey, peer_public_bytes: bytes) -> bytes:
-        """用 X25519 密钥派生出共享密钥"""
+    def derive_shared_key(private_key, peer_public_bytes: bytes) -> bytes:
+        """从公钥派生出共享密钥"""
         peer_public = X25519PublicKey.from_public_bytes(peer_public_bytes)
         shared_key = private_key.exchange(peer_public)
         return shared_key
 
-    @staticmethod
-    def generate_kyber_keypair():
-        """生成 kyber 密钥对"""
-        public_key, private_key = ML_KEM_768.keygen()
-        return public_key, private_key
-
-    @staticmethod
-    def encaps(public_key: bytes):
-        """用 kyber 公钥封装共享密钥"""
-        shared_key, ciphertext = ML_KEM_768.encaps(public_key)
-        return shared_key, ciphertext
-
-    @staticmethod
-    def decaps(private_key: bytes, ciphertext: bytes):
-        """用 kyber 私钥解封装共享密钥"""
-        return ML_KEM_768.decaps(private_key, ciphertext)
 
     @staticmethod
     def generate_salt():
@@ -72,10 +55,10 @@ class CryptoUtils:
     def shared_key_derive_aes_key(shared_key: bytes, salt: bytes) -> bytes:
         """从共享密钥中派生出 AES 密钥"""
         hkdf = HKDF(
-            algorithm=hashes.SHA256(), 
-            length=32, 
-            salt=salt, 
-            info=b"aes_key", 
+            algorithm=hashes.SHA256(),
+            length=32,
+            salt=salt,
+            info=b"aes_key",
             backend=default_backend()
         )
         return hkdf.derive(shared_key)
@@ -120,7 +103,7 @@ class CryptoUtils:
         :return: 校验是否成功
         """
         current_time = int(time.time())
-        diff = abs(current_time - timestamp)
+        diff = current_time - timestamp
         if seq != data_seq:
             raise ReplayAttackError("序列号校验失败！可能存在重放攻击！")
         if diff > window:
@@ -128,32 +111,42 @@ class CryptoUtils:
         return True
 
     @staticmethod
-    def aes_encrypt(aes_key: bytes, data: bytes, seq: int) -> bytes:
+    def aes_encrypt(peer_public_key: bytes, data: bytes, seq: int) -> bytes:
         """
         使用 AES 密钥加密数据
-        :param aes_key: AES 私钥
+        :param peer_public_key: 对方的 x25519 公钥
         :param data: 要加密的数据
         :param seq: 序列号
         :return: 已加密的数据(密文已包含tag)
         """
+        salt = CryptoUtils.generate_salt()
+        private_key, public_bytes = CryptoUtils.generate_keypair()
         nonce = token_bytes(12)
+        shared_key = CryptoUtils.derive_shared_key(private_key, peer_public_key)
+        aes_key = CryptoUtils.shared_key_derive_aes_key(shared_key, salt)
         packed_data = CryptoUtils._pack(data, seq)
         aesgcm = AESGCM(aes_key)
         ciphertext = aesgcm.encrypt(nonce, packed_data, None)
-        return nonce + ciphertext
+        # 公钥和盐均为32字节
+        return nonce + public_bytes + salt + ciphertext
 
     @staticmethod
-    def aes_decrypt(aes_key: bytes, data: bytes, seq: int) -> bytes:
+    def aes_decrypt(data: bytes, seq: int, private_key: X25519PrivateKey) -> bytes:
         """
         使用 AES 密钥解密数据
-        :param aes_key: AES 私钥
         :param data: 加密的数据
         :param seq: 序列号
+        :param private_key: x25519 私钥
         :return: 已解密的数据
         """
-        # 从数据中分离nonce和tag
+        # 从数据中分离nonce、公钥、随机盐和密文
         nonce = data[:12]
-        encrypted_data = data[12:]
+        public_key = data[12:44]
+        salt = data[44:76]
+        encrypted_data = data[76:]
+        # 重新生成 AES 密钥
+        shared_key = CryptoUtils.derive_shared_key(private_key, public_key)
+        aes_key = CryptoUtils.shared_key_derive_aes_key(shared_key, salt)
         try:
             aesgcm = AESGCM(aes_key)
             # 这里会自动验证tag

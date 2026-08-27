@@ -1,7 +1,7 @@
 # PyEndCrypt
 用Python写的端到端加密工具，采用混合加密，对数据进行双重校验，使用简单，和平常使用socket套接字步骤差不多。
 
-本项目适合想了解密码学的开发人员，提供有ECC、kyber和AES加解密供研究。如果你想，可以根据下文[API](#api)进行二次开发。
+本项目适合想了解密码学的开发人员，提供有ECC和AES加解密供研究。如果你想，可以根据下文[API](#api)进行二次开发。
 
 项目目前仍处于开发阶段，如果你想参与开发请看下文[工作清单](#工作清单)
 
@@ -10,8 +10,7 @@
 ---
 
 ## 💡特点
-- 端到端加密，X25519 / kyber + AES 混合加密。
-- 非对称加密可自选x25519或kyber。
+- 端到端加密，X25519 + AES 混合加密。
 - 服务端和客户端强制加密，没有明文传输。
 - 自动握手。
 - 使用简单，代码简洁。
@@ -21,29 +20,22 @@
 - ***支持数据包大小伪造***。
 - ***使用mTLS认证***，保护服务端和客户端，杜绝中间人攻击。
 - ***采用TLS加密传输层***，保障传输层安全。
-- ***支持动态客户端证书签发***，客户端只需要 CA 证书即可
+- ***支持动态客户端证书签发***，客户端只需要 CA 证书即可。
+- 每条消息单独使用一个 AES 密钥。
 
 ---
 
 ## 🔐加密方案
 认证：mTLS<br>
 传输层：TLSv1.3<br>
-密钥交换阶段：ECC X25519 256位 / kyber 768位<br>
+密钥交换阶段：ECC X25519 256位<br>
 数据加密：AES-GCM 256位<br>
-
-> **⚠️ 加密算法风险警告**
-> 
-> kyber算法使用的库为`kyber-py`，虽然目前没有已知漏洞，
-> 但是官方文档已经给出明确警告：没有针对任何形式的侧信道攻击进行安全设计。
-> 这里只用于后量子密码学学习研究。
-> ***建议使用x25519算法***。
 
 ---
 
 ## ⚙️依赖安装
 ```bash
 pip install cryptography
-pip install kyber-py
 ```
 
 ---
@@ -58,7 +50,6 @@ key = "" # 服务端密钥路径
 ca_crt = "" # CA 证书路径
 ca_key = "" # CA 密钥路径
 padding = 0 # 数据包填充级别
-asy_mod = ""    # 非对称加密算法("x25519"或"kyber")
 
 server = Server("127.0.0.1",
                 5555,
@@ -66,7 +57,6 @@ server = Server("127.0.0.1",
                 key,
                 ca_crt, 
                 ca_key, 
-                asy_mod,
                 padding)
 server.accept()
 server.send("Hello From Server")
@@ -146,18 +136,15 @@ client.close()
 ### CryptoUntils
 加密工具类，所有加密和解密，以及密钥生成均在这里实现<br>
 方法:
-- `generate_x25519_keypair()`: 生成 X25519 临时密钥对
-- `x25519_derive_shared_key(private_key: X25519PrivateKey, peer_public_bytes: bytes)`: 用 X25519 密钥派生出共享密钥
-- `generate_kyber_keypair()`: 生成 kyber 密钥对
-- `encaps(public_key: bytes)`: 用 kyber 公钥封装共享密钥
-- `decaps(private_key: bytes, ciphertext: bytes)`: 用 kyber 私钥解封装共享密钥
+- `generate_keypair()`: 生成临时密钥对
+- `derive_shared_key(private_key: X25519PrivateKey, peer_public_bytes: bytes)`: 用 X25519 密钥派生出共享密钥
 - `generate_salt()`: 生成256位随机盐值
-- `shared_key_derive_aes_key(shared_key: bytes)`: 从共享密钥中派生出 AES 密钥
+- `shared_key_derive_aes_key(shared_key: bytes, salt: bytes)`: 从共享密钥中派生出 AES 密钥
 - `_pack(data: bytes, seq: int)`: 将8字节时间戳和4字节序列号打包进数据中
 - `_unpack(data: bytes)`: 解包数据
 - `_verify(timestamp: int, seq: int, data_seq: int, window=TIMEOUT)`: 数据校验
-- `aes_encrypt(aes_key: bytes, data: bytes)`: 使用 AES 私钥加密数据
-- `aes_decrypt(aes_key: bytes, data: bytes)`: 使用 AES 私钥解密数据
+- `aes_encrypt(peer_public_key: bytes, data: bytes, seq: int)`: 使用 AES 私钥加密数据
+- `aes_decrypt(data: bytes, seq: int, private_key: X25519PrivateKey)`: 使用 AES 私钥解密数据
 
 ---
 
@@ -167,6 +154,7 @@ client.close()
 - `Client(self, host: str, port: int, ca_cert: str, padding: int = 0, encoding: str = "utf-8")`: 创建客户端
 - `_negotiate()`: 预先协商
 - `_handshake()`: 建立加密握手
+- `_refresh_keypair()`: 重新交换密钥
 - `connect()`: 连接服务器并完成握手
 - `send(data)`: 加密数据并发送
 - `receive()`: 接收数据并解密
