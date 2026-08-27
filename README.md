@@ -354,7 +354,6 @@ client.close()
 - `refresh_session(peer_public_key)`: 刷新会话根密钥
 - `derive_message_key(seq)`: 从根密钥派生消息密钥
 - `derive_shared_key(private_key: X25519PrivateKey, peer_public_bytes: bytes)`: 用 X25519 密钥派生出共享密钥
-- `generate_salt()`: 生成256位随机盐值
 - `shared_key_derive_aes_key(shared_key: bytes, salt: bytes)`: 从共享密钥中派生出 AES 密钥
 - `_pack(data: bytes, seq: int)`: 将8字节时间戳和4字节序列号打包进数据中
 - `_unpack(data: bytes)`: 解包数据
