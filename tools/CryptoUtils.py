@@ -24,6 +24,12 @@ import subprocess
 
 class CryptoUtils:
     TIMEOUT = 300   # 5分钟
+    _session_root_key = None
+    _session_private_key = None
+    _session_public_key = None
+    _session_peer_public = None
+    _session_seq_limit = 0
+
     @staticmethod
     def generate_keypair():
         """
@@ -39,17 +45,64 @@ class CryptoUtils:
         return private_key, public_bytes
 
     @staticmethod
+    def init_session(peer_public_key: bytes) -> tuple:
+        """
+        初始化会话，生成根密钥
+        :param peer_public_key: 对方公钥
+        :return 私钥，公钥
+        """
+        private_key, public_bytes = CryptoUtils.generate_keypair()
+        shared_key = CryptoUtils.derive_shared_key(private_key, peer_public_key)
+        root_key = CryptoUtils.shared_key_derive_aes_key(shared_key, b"session_root")
+        CryptoUtils._session_root_key = root_key
+        CryptoUtils._session_private_key = private_key
+        CryptoUtils._session_public_key = public_bytes
+        CryptoUtils._session_peer_public = peer_public_key
+        CryptoUtils._session_seq_limit = 5
+        return private_key, public_bytes
+
+    @staticmethod
+    def refresh_session(peer_public_key: bytes) -> tuple:
+        """
+        刷新会话根密钥（提供后向安全性）
+        :param peer_public_key: 对方的公钥
+        :return: (私钥, 公钥)
+        """
+        private_key, public_key = CryptoUtils.generate_keypair()
+        shared_key = CryptoUtils.derive_shared_key(private_key, peer_public_key)
+        root_key = CryptoUtils.shared_key_derive_aes_key(shared_key, b"session_root")
+        CryptoUtils._session_root_key = root_key
+        CryptoUtils._session_private_key = private_key
+        CryptoUtils._session_public_key = public_key
+        CryptoUtils._session_peer_public = peer_public_key
+
+        return private_key, public_key
+
+    @staticmethod
+    def derive_message_key(seq: int) -> bytes:
+        """
+        从根密钥派生消息密钥
+        :param seq: 序列号
+        :return: 32字节的消息密钥
+        """
+        if CryptoUtils._session_root_key is None:
+            raise Exception("会话未初始化")
+        hkdf = HKDF(
+            algorithm=hashes.SHA256(),
+            length=32,
+            salt=b"message_salt",
+            info=struct.pack("!I", seq),
+            backend=default_backend()
+        )
+        message_key = hkdf.derive(CryptoUtils._session_root_key)
+        return message_key
+
+    @staticmethod
     def derive_shared_key(private_key, peer_public_bytes: bytes) -> bytes:
         """从公钥派生出共享密钥"""
         peer_public = X25519PublicKey.from_public_bytes(peer_public_bytes)
         shared_key = private_key.exchange(peer_public)
         return shared_key
-
-
-    @staticmethod
-    def generate_salt():
-        """生成随机256位的随机盐"""
-        return token_bytes(32)
 
     @staticmethod
     def shared_key_derive_aes_key(shared_key: bytes, salt: bytes) -> bytes:
@@ -119,16 +172,22 @@ class CryptoUtils:
         :param seq: 序列号
         :return: 已加密的数据(密文已包含tag)
         """
-        salt = CryptoUtils.generate_salt()
-        private_key, public_bytes = CryptoUtils.generate_keypair()
+
+        if (CryptoUtils._session_root_key is None or
+        CryptoUtils._session_peer_public != peer_public_key):
+            _, public_key = CryptoUtils.init_session(peer_public_key)
+        elif seq > CryptoUtils._session_seq_limit:
+            _, public_key = CryptoUtils.refresh_session(peer_public_key)
+            CryptoUtils._session_seq_limit += 5
+        else:
+            public_key = CryptoUtils._session_public_key
         nonce = token_bytes(12)
-        shared_key = CryptoUtils.derive_shared_key(private_key, peer_public_key)
-        aes_key = CryptoUtils.shared_key_derive_aes_key(shared_key, salt)
+        aes_key = CryptoUtils.derive_message_key(seq)
         packed_data = CryptoUtils._pack(data, seq)
         aesgcm = AESGCM(aes_key)
         ciphertext = aesgcm.encrypt(nonce, packed_data, None)
         # 公钥和盐均为32字节
-        return nonce + public_bytes + salt + ciphertext
+        return nonce + public_key + ciphertext
 
     @staticmethod
     def aes_decrypt(data: bytes, seq: int, private_key: X25519PrivateKey) -> bytes:
@@ -142,11 +201,18 @@ class CryptoUtils:
         # 从数据中分离nonce、公钥、随机盐和密文
         nonce = data[:12]
         public_key = data[12:44]
-        salt = data[44:76]
-        encrypted_data = data[76:]
+        encrypted_data = data[44:]
         # 重新生成 AES 密钥
         shared_key = CryptoUtils.derive_shared_key(private_key, public_key)
-        aes_key = CryptoUtils.shared_key_derive_aes_key(shared_key, salt)
+        root_key = CryptoUtils.shared_key_derive_aes_key(shared_key, b"session_root")
+        hkdf = HKDF(
+            algorithm=hashes.SHA256(),
+            length=32,
+            salt=b"message_salt",
+            info=struct.pack("!I", seq),
+            backend=default_backend()
+        )
+        aes_key = hkdf.derive(root_key)
         try:
             aesgcm = AESGCM(aes_key)
             # 这里会自动验证tag

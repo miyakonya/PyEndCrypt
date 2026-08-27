@@ -45,7 +45,6 @@ class Client(NetworkBase, Builder):
         self.asy_mod = None
         self.server_public_key = None
         self.private_key = None
-        self.refresh_count = 5
         self.is_refreshing = False
         self.pending_refresh = False
 
@@ -73,6 +72,15 @@ class Client(NetworkBase, Builder):
             self.logger.error("接收服务器临时公钥失败")
             raise HandshakeError("接收服务器临时公钥失败")
         self.logger.info(f"接收到服务器临时公钥，长度{len(self.server_public_key)}字节")
+        shared_key = CryptoUtils.derive_shared_key(self.private_key, self.server_public_key)
+        root_key = CryptoUtils.shared_key_derive_aes_key(shared_key, b"session_root")
+
+        CryptoUtils._session_root_key = root_key
+        CryptoUtils._session_private_key = self.private_key
+        CryptoUtils._session_public_key = public_key
+        CryptoUtils._session_peer_public = self.server_public_key
+        CryptoUtils._session_seq_limit = 5
+        self.logger.info("初始化会话完毕")
         self._send_raw(b"Client Hello")
         response = self._recv_raw()
         if response == b"Server Hello":
@@ -127,19 +135,21 @@ class Client(NetworkBase, Builder):
         self.logger.info("===== 预先验证全部完成 =====")
 
     def _refresh_keypair(self):
+        """刷新会话根密钥"""
         if self.is_refreshing:
             self.logger.warning("密钥刷新进行中，跳过")
             return
         self.is_refreshing = True
         try:
-            self.logger.info("开始重新交换密钥对")
+            self.logger.info("开始刷新会话根密钥")
             self._send_raw(b"REFRESH_KEY")
-            # 等待服务端确认
+            self.logger.info("等待 REFRESH_ACK...")
             response = self._recv_raw()
+            self.logger.info("收到响应")
             if response != b"REFRESH_ACK":
                 raise Exception(f"服务端未确认刷新: {response[:20]}...")
-            # 执行握手
-            self._handshake()
+            CryptoUtils.refresh_session(self.server_public_key)
+            CryptoUtils._session_seq_limit += 5
             self.logger.info("密钥刷新完成")
             self.pending_refresh = False
         except Exception as e:
@@ -151,11 +161,12 @@ class Client(NetworkBase, Builder):
     def send(self, data):
         if not self.handshake_done:
             raise HandshakeError("没有完成加密握手")
+        if self.seq > CryptoUtils._session_seq_limit and not self.is_refreshing:
+            self.pending_refresh = True
         # 如果有待处理的刷新，先执行刷新
         if self.pending_refresh and not self.is_refreshing:
             self.logger.info("执行待处理的密钥刷新")
             self._refresh_keypair()
-            self.refresh_count += 5
             self.pending_refresh = False
         if not isinstance(data, bytes):
             data = str(data).encode(self.encoding)
@@ -167,21 +178,18 @@ class Client(NetworkBase, Builder):
         self.logger.info(f"当前序列号: {self.seq}")
         self.logger.info(f"[Client]->[Server]: 发送{len(data)}字节")
         self.seq += 1
-        if self.seq > self.refresh_count:
-            self.pending_refresh = False
 
     def receive(self):
         if not self.handshake_done:
             raise HandshakeError("没有完成加密握手")
-        if self.pending_refresh and not self.is_refreshing:
-            self._refresh_keypair()
-            self.refresh_count += 5
-            self.pending_refresh = False
+        if self.seq > CryptoUtils._session_seq_limit and not self.is_refreshing:
+            self.pending_refresh = True
         raw_data = self._recv_raw()
         if raw_data == b"REFRESH_KEY":
             self.logger.info("收到服务端刷新请求")
             self._send_raw(b"REFRESH_ACK")
-            self._handshake()
+            CryptoUtils.refresh_session(self.server_public_key)
+            CryptoUtils._session_seq_limit += 5
             self.pending_refresh = False
             self.logger.info("密钥刷新完成")
             raw_data = self._recv_raw()
@@ -192,8 +200,6 @@ class Client(NetworkBase, Builder):
             self.logger.info(f"当前序列号: {self.seq}")
             self.logger.info(f"[Server]->[Client]: 接收{len(data)}字节")
             self.seq += 1
-            if self.seq > self.refresh_count:
-                self.pending_refresh = True
             return data.decode(self.encoding)
         except Exception as e:
             self.logger.error(f"服务端发送了不正确的数据包:{e}")
