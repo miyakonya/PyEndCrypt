@@ -49,7 +49,7 @@ class CryptoUtils:
         """
         初始化会话，生成根密钥
         :param peer_public_key: 对方公钥
-        :return 私钥，公钥
+        :return: (私钥, 公钥)
         """
         private_key, public_bytes = CryptoUtils.generate_keypair()
         shared_key = CryptoUtils.derive_shared_key(private_key, peer_public_key)

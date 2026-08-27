@@ -72,14 +72,7 @@ class Client(NetworkBase, Builder):
             self.logger.error("接收服务器临时公钥失败")
             raise HandshakeError("接收服务器临时公钥失败")
         self.logger.info(f"接收到服务器临时公钥，长度{len(self.server_public_key)}字节")
-        shared_key = CryptoUtils.derive_shared_key(self.private_key, self.server_public_key)
-        root_key = CryptoUtils.shared_key_derive_aes_key(shared_key, b"session_root")
-
-        CryptoUtils._session_root_key = root_key
-        CryptoUtils._session_private_key = self.private_key
-        CryptoUtils._session_public_key = public_key
-        CryptoUtils._session_peer_public = self.server_public_key
-        CryptoUtils._session_seq_limit = 5
+        CryptoUtils.init_session(self.server_public_key)
         self.logger.info("初始化会话完毕")
         self._send_raw(b"Client Hello")
         response = self._recv_raw()

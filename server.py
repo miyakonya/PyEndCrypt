@@ -83,14 +83,7 @@ class Server(NetworkBase, Builder):
             self.logger.info(f"接收到客户端临时公钥，长度{len(self.client_public_key)}字节")
             self._send_raw(public_key)
             self.logger.info("发送临时公钥给客户端")
-            shared_key = CryptoUtils.derive_shared_key(self.private_key, self.client_public_key)
-            root_key = CryptoUtils.shared_key_derive_aes_key(shared_key, b"session_root")
-
-            CryptoUtils._session_root_key = root_key
-            CryptoUtils._session_private_key = self.private_key
-            CryptoUtils._session_public_key = public_key
-            CryptoUtils._session_peer_public = self.client_public_key
-            CryptoUtils._session_seq_limit = 5
+            CryptoUtils.init_session(self.client_public_key)
             self.logger.info("初始化会话完毕")
             response = self._recv_raw()
             if response == b"Client Hello":
