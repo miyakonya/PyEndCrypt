@@ -13,6 +13,7 @@ from tools.CryptoUtils import CryptoUtils
 from tools.Logger import Logger
 from tools.SSLBuilder import Builder
 from tools.exceptions import HandshakeError
+from tools.secure_memory import clear, clear_key
 from shutil import rmtree
 import os
 import gc
@@ -201,5 +202,10 @@ class Client(NetworkBase, Builder):
     def close(self):
         super().close()
         self.seq = 0
+        CryptoUtils.clear_session()
+        if self.private_key:
+            clear_key(self.private_key)
+        if self.server_public_key:
+            clear(self.server_public_key)
         gc.collect()
         gc.collect()

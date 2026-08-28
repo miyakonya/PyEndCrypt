@@ -16,11 +16,12 @@ from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey, X
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 from cryptography.hazmat.backends import default_backend
+from .secure_memory import clear, clear_key
+import gc
 from secrets import token_bytes
 from .exceptions import *
 import struct
 import time
-import subprocess
 
 class CryptoUtils:
     TIMEOUT = 300   # 5分钟
@@ -64,10 +65,13 @@ class CryptoUtils:
     @staticmethod
     def refresh_session(peer_public_key: bytes) -> tuple:
         """
-        刷新会话根密钥（提供后向安全性）
+        刷新会话根密钥
         :param peer_public_key: 对方的公钥
         :return: (私钥, 公钥)
         """
+        seq = CryptoUtils._session_seq_limit
+        CryptoUtils.clear_session()
+        CryptoUtils._session_seq_limit = seq
         private_key, public_key = CryptoUtils.generate_keypair()
         shared_key = CryptoUtils.derive_shared_key(private_key, peer_public_key)
         root_key = CryptoUtils.shared_key_derive_aes_key(shared_key, b"session_root")
@@ -182,12 +186,15 @@ class CryptoUtils:
         else:
             public_key = CryptoUtils._session_public_key
         nonce = token_bytes(12)
-        aes_key = CryptoUtils.derive_message_key(seq)
-        packed_data = CryptoUtils._pack(data, seq)
-        aesgcm = AESGCM(aes_key)
-        ciphertext = aesgcm.encrypt(nonce, packed_data, None)
-        # 公钥和盐均为32字节
-        return nonce + public_key + ciphertext
+        aes_key = bytearray(CryptoUtils.derive_message_key(seq))
+        try:
+            packed_data = CryptoUtils._pack(data, seq)
+            aesgcm = AESGCM(aes_key)
+            ciphertext = aesgcm.encrypt(nonce, packed_data, None)
+            return nonce + public_key + ciphertext
+        finally:
+            clear(aes_key)
+            del aes_key
 
     @staticmethod
     def aes_decrypt(data: bytes, seq: int, private_key: X25519PrivateKey) -> bytes:
@@ -198,7 +205,7 @@ class CryptoUtils:
         :param private_key: x25519 私钥
         :return: 已解密的数据
         """
-        # 从数据中分离nonce、公钥、随机盐和密文
+        # 从数据中分离nonce、公钥和密文
         nonce = data[:12]
         public_key = data[12:44]
         encrypted_data = data[44:]
@@ -212,39 +219,37 @@ class CryptoUtils:
             info=struct.pack("!I", seq),
             backend=default_backend()
         )
-        aes_key = hkdf.derive(root_key)
+        aes_key = bytearray(hkdf.derive(root_key))
         try:
             aesgcm = AESGCM(aes_key)
             # 这里会自动验证tag
             ciphertext = aesgcm.decrypt(nonce, encrypted_data, None)
         except Exception as e:
             raise DecryptionError(f"AES-GCM 认证失败，数据可能被篡改: {e}") from e
+        finally:
+            clear(shared_key)
+            clear(root_key)
+            clear(aes_key)
         timestamp, data, data_seq = CryptoUtils._unpack(ciphertext)
         CryptoUtils._verify(timestamp, seq, data_seq)
         return data
+
     @staticmethod
-    def generate_cert_key(ca_cert: str, ca_key: str):
-        """
-        生成客户端证书和密钥
-        :return: 客户端证书和密钥
-        """
-        # 生成客户端密钥
-        subprocess.run([
-            "openssl", "genrsa", "-out", "client.key", "2048"
-        ])
-        subprocess.run([
-            "openssl", "req", "-new", "-key", "client.key",
-            "-out", "client.csr", "-subj", "/CN=client"
-        ])
-        # 生成客户端证书
-        subprocess.run([
-            "openssl", "x509", "-req", "-days", "365",
-            "-in", "client.csr", "-CA", f"{ca_cert}",
-            "-CAkey", f"{ca_key}", "-set_serial", "02",
-            "-out", "client.crt"
-        ])
-        with open("client.crt", "r") as cr:
-            cert = cr.read()
-        with open("client.key", "r") as kr:
-            key = kr.read()
-        return cert, key
+    def clear_session():
+        """清除会话密钥"""
+        if CryptoUtils._session_root_key:
+            clear(CryptoUtils._session_root_key)
+        if CryptoUtils._session_private_key:
+            clear_key(CryptoUtils._session_private_key)
+        if CryptoUtils._session_public_key:
+            clear(CryptoUtils._session_public_key)
+        if CryptoUtils._session_peer_public:
+            clear(CryptoUtils._session_peer_public)
+
+        CryptoUtils._session_root_key = None
+        CryptoUtils._session_private_key = None
+        CryptoUtils._session_public_key = None
+        CryptoUtils._session_peer_public = None
+        CryptoUtils._session_seq_limit = 0
+        gc.collect()
+        gc.collect()

@@ -23,8 +23,13 @@
 - ***使用mTLS认证***，保护服务端和客户端，杜绝中间人攻击。
 - ***采用TLS加密传输层***，保障传输层安全。
 - ***支持动态客户端证书签发***，客户端只需要 CA 证书即可。
-- 消息密钥层级：会话根密钥 + 每条消息独立派生密钥。
-- 自动密钥刷新：每5条消息自动更新根密钥，提供前向和后向安全性。
+- 消息密钥层级，会话根密钥 + 每条消息独立派生密钥。
+- 自动密钥刷新，每5条消息自动更新根密钥，提供前向和后向安全性。
+- 自动从内存中清理敏感数据。
+
+## 🚨 警告
+
+**警告：** 由于 Python 语言的特性，***并不能完全从内存中清理敏感数据***，本项目采用的是转换 bytearray + gc 回收。
 
 ---
 
@@ -360,6 +365,7 @@ client.close()
 - `_verify(timestamp: int, seq: int, data_seq: int, window=TIMEOUT)`: 数据校验
 - `aes_encrypt(peer_public_key: bytes, data: bytes, seq: int)`: 使用 AES 私钥加密数据
 - `aes_decrypt(data: bytes, seq: int, private_key: X25519PrivateKey)`: 使用 AES 私钥解密数据
+- `clear_session()`: 清除会话密钥
 
 ---
 
@@ -383,6 +389,7 @@ client.close()
 - `Server(self, host: str, port: int, listen: int, server_cert: str, server_key: str, ca_cert:str, ca_key: str, padding: int = 0, encoding: str = "utf-8")`: 创建服务端
 - `_negotiate()`: 预先协商
 - `_handshake()`: 建立加密握手
+- `_refresh_keypair()`: 重新交换密钥
 - `accept()`: 接受连接并完成握手
 - `send(data)`: 加密数据并发送
 - `receive()`: 接收数据并解密
@@ -421,6 +428,7 @@ PyEndCrypt/
     ├── SSLBuilder.py    # SSL 连接构建器
     ├── generator.py     # 证书密钥全生成器
     ├── exceptions.py    # 所有异常的基类
+    ├── secure_memory.py # 内存清理工具
     └── __init__.py
 ```
 
@@ -434,9 +442,10 @@ PyEndCrypt/
 - ⚫ ~~将`print()`替换为日志记录系统~~（完成）
 - ⚫ ~~添加服务端自动生成证书和密钥返回给客户端~~（完成）
 - ⚫ ~~优化异常处理~~（完成）
+- ⚫ ~~从内存中销毁密钥~~（完成）
 - 🟡 增加心跳机制
-- 🟡 从内存中销毁密钥
-- 🟡 添加客户端自动重连
+- 🟡 实现异步
+- 🟡 实现处理多个客户端
 
 ---
 

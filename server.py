@@ -14,6 +14,7 @@ from tools.Logger import Logger
 from tools.SSLBuilder import Builder
 from tools.CredentialProvisioner import Generator
 from tools.exceptions import HandshakeError
+from tools.secure_memory import clear, clear_key
 import gc
 
 class Server(NetworkBase, Builder):
@@ -193,6 +194,10 @@ class Server(NetworkBase, Builder):
 
     def close(self):
         super().close()
-        self.seq = 0
+        CryptoUtils.clear_session()
+        if self.private_key:
+            clear_key(self.private_key)
+        if self.client_public_key:
+            clear(self.client_public_key)
         gc.collect()
         gc.collect()
