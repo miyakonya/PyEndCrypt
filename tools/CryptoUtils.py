@@ -24,15 +24,15 @@ import struct
 import time
 
 class CryptoUtils:
-    TIMEOUT = 300   # 5分钟
-    _session_root_key = None
-    _session_private_key = None
-    _session_public_key = None
-    _session_peer_public = None
-    _session_seq_limit = 0
+    def __init__(self):
+        self.TIMEOUT = 300   # 5分钟
+        self._session_root_key = None
+        self._session_private_key = None
+        self._session_public_key = None
+        self._session_peer_public = None
+        self._session_seq_limit = 0
 
-    @staticmethod
-    def generate_keypair():
+    def generate_keypair(self):
         """
         生成 临时密钥对
         :return: 密钥对
@@ -45,51 +45,48 @@ class CryptoUtils:
         )
         return private_key, public_bytes
 
-    @staticmethod
-    def init_session(peer_public_key: bytes) -> tuple:
+    def init_session(self, peer_public_key: bytes) -> tuple:
         """
         初始化会话，生成根密钥
         :param peer_public_key: 对方公钥
         :return: (私钥, 公钥)
         """
-        private_key, public_bytes = CryptoUtils.generate_keypair()
-        shared_key = CryptoUtils.derive_shared_key(private_key, peer_public_key)
-        root_key = CryptoUtils.shared_key_derive_aes_key(shared_key, b"session_root")
-        CryptoUtils._session_root_key = root_key
-        CryptoUtils._session_private_key = private_key
-        CryptoUtils._session_public_key = public_bytes
-        CryptoUtils._session_peer_public = peer_public_key
-        CryptoUtils._session_seq_limit = 5
+        private_key, public_bytes = self.generate_keypair()
+        shared_key = self.derive_shared_key(private_key, peer_public_key)
+        root_key = self.shared_key_derive_aes_key(shared_key, b"session_root")
+        self._session_root_key = root_key
+        self._session_private_key = private_key
+        self._session_public_key = public_bytes
+        self._session_peer_public = peer_public_key
+        self._session_seq_limit = 5
         return private_key, public_bytes
 
-    @staticmethod
-    def refresh_session(peer_public_key: bytes) -> tuple:
+    def refresh_session(self, peer_public_key: bytes) -> tuple:
         """
         刷新会话根密钥
         :param peer_public_key: 对方的公钥
         :return: (私钥, 公钥)
         """
-        seq = CryptoUtils._session_seq_limit
-        CryptoUtils.clear_session()
-        CryptoUtils._session_seq_limit = seq
-        private_key, public_key = CryptoUtils.generate_keypair()
-        shared_key = CryptoUtils.derive_shared_key(private_key, peer_public_key)
-        root_key = CryptoUtils.shared_key_derive_aes_key(shared_key, b"session_root")
-        CryptoUtils._session_root_key = root_key
-        CryptoUtils._session_private_key = private_key
-        CryptoUtils._session_public_key = public_key
-        CryptoUtils._session_peer_public = peer_public_key
+        seq = self._session_seq_limit
+        self.clear_session()
+        self._session_seq_limit = seq
+        private_key, public_key = self.generate_keypair()
+        shared_key = self.derive_shared_key(private_key, peer_public_key)
+        root_key = self.shared_key_derive_aes_key(shared_key, b"session_root")
+        self._session_root_key = root_key
+        self._session_private_key = private_key
+        self._session_public_key = public_key
+        self._session_peer_public = peer_public_key
 
         return private_key, public_key
 
-    @staticmethod
-    def derive_message_key(seq: int) -> bytes:
+    def derive_message_key(self, seq: int) -> bytes:
         """
         从根密钥派生消息密钥
         :param seq: 序列号
         :return: 32字节的消息密钥
         """
-        if CryptoUtils._session_root_key is None:
+        if self._session_root_key is None:
             raise Exception("会话未初始化")
         hkdf = HKDF(
             algorithm=hashes.SHA256(),
@@ -98,18 +95,16 @@ class CryptoUtils:
             info=struct.pack("!I", seq),
             backend=default_backend()
         )
-        message_key = hkdf.derive(CryptoUtils._session_root_key)
+        message_key = hkdf.derive(self._session_root_key)
         return message_key
 
-    @staticmethod
-    def derive_shared_key(private_key, peer_public_bytes: bytes) -> bytes:
+    def derive_shared_key(self, private_key, peer_public_bytes: bytes) -> bytes:
         """从公钥派生出共享密钥"""
         peer_public = X25519PublicKey.from_public_bytes(peer_public_bytes)
         shared_key = private_key.exchange(peer_public)
         return shared_key
 
-    @staticmethod
-    def shared_key_derive_aes_key(shared_key: bytes, salt: bytes) -> bytes:
+    def shared_key_derive_aes_key(self, shared_key: bytes, salt: bytes) -> bytes:
         """从共享密钥中派生出 AES 密钥"""
         hkdf = HKDF(
             algorithm=hashes.SHA256(),
@@ -120,8 +115,7 @@ class CryptoUtils:
         )
         return hkdf.derive(shared_key)
 
-    @staticmethod
-    def _pack(data: bytes, seq: int) -> bytes:
+    def _pack(self, data: bytes, seq: int) -> bytes:
         """
         将8字节时间戳和4字节序列号打包进数据中
         :param data: 需要打包的数据
@@ -132,8 +126,7 @@ class CryptoUtils:
         seq_bytes = struct.pack("!I", seq)  # 4字节序列号
         return timestamp_byte + seq_bytes + data
 
-    @staticmethod
-    def _unpack(data: bytes):
+    def _unpack(self, data: bytes):
         """
         解包数据
         :param data: 需要解包的数据
@@ -149,8 +142,7 @@ class CryptoUtils:
         rdata = data[12:]
         return timestamp, rdata, data_seq
 
-    @staticmethod
-    def _verify(timestamp: int, seq: int, data_seq: int, window=TIMEOUT) -> bool:
+    def _verify(self, timestamp: int, seq: int, data_seq: int, window=300) -> bool:
         """
         数据校验
         :param timestamp: 时间戳
@@ -167,8 +159,7 @@ class CryptoUtils:
             raise ReplayAttackError(f"时间戳验证失败！时间差:{diff}秒")
         return True
 
-    @staticmethod
-    def aes_encrypt(peer_public_key: bytes, data: bytes, seq: int) -> bytes:
+    def aes_encrypt(self, peer_public_key: bytes, data: bytes, seq: int) -> bytes:
         """
         使用 AES 密钥加密数据
         :param peer_public_key: 对方的 x25519 公钥
@@ -177,18 +168,18 @@ class CryptoUtils:
         :return: 已加密的数据(密文已包含tag)
         """
 
-        if (CryptoUtils._session_root_key is None or
-        CryptoUtils._session_peer_public != peer_public_key):
-            _, public_key = CryptoUtils.init_session(peer_public_key)
-        elif seq > CryptoUtils._session_seq_limit:
-            _, public_key = CryptoUtils.refresh_session(peer_public_key)
-            CryptoUtils._session_seq_limit += 5
+        if (self._session_root_key is None or
+        self._session_peer_public != peer_public_key):
+            _, public_key = self.init_session(peer_public_key)
+        elif seq > self._session_seq_limit:
+            _, public_key = self.refresh_session(peer_public_key)
+            self._session_seq_limit += 5
         else:
-            public_key = CryptoUtils._session_public_key
+            public_key = self._session_public_key
         nonce = token_bytes(12)
-        aes_key = bytearray(CryptoUtils.derive_message_key(seq))
+        aes_key = bytearray(self.derive_message_key(seq))
         try:
-            packed_data = CryptoUtils._pack(data, seq)
+            packed_data = self._pack(data, seq)
             aesgcm = AESGCM(aes_key)
             ciphertext = aesgcm.encrypt(nonce, packed_data, None)
             return nonce + public_key + ciphertext
@@ -196,8 +187,7 @@ class CryptoUtils:
             clear(aes_key)
             del aes_key
 
-    @staticmethod
-    def aes_decrypt(data: bytes, seq: int, private_key: X25519PrivateKey) -> bytes:
+    def aes_decrypt(self, data: bytes, seq: int, private_key: X25519PrivateKey) -> bytes:
         """
         使用 AES 密钥解密数据
         :param data: 加密的数据
@@ -210,8 +200,8 @@ class CryptoUtils:
         public_key = data[12:44]
         encrypted_data = data[44:]
         # 重新生成 AES 密钥
-        shared_key = CryptoUtils.derive_shared_key(private_key, public_key)
-        root_key = CryptoUtils.shared_key_derive_aes_key(shared_key, b"session_root")
+        shared_key = self.derive_shared_key(private_key, public_key)
+        root_key = self.shared_key_derive_aes_key(shared_key, b"session_root")
         hkdf = HKDF(
             algorithm=hashes.SHA256(),
             length=32,
@@ -230,26 +220,25 @@ class CryptoUtils:
             clear(shared_key)
             clear(root_key)
             clear(aes_key)
-        timestamp, data, data_seq = CryptoUtils._unpack(ciphertext)
-        CryptoUtils._verify(timestamp, seq, data_seq)
+        timestamp, data, data_seq = self._unpack(ciphertext)
+        self._verify(timestamp, seq, data_seq)
         return data
 
-    @staticmethod
-    def clear_session():
+    def clear_session(self):
         """清除会话密钥"""
-        if CryptoUtils._session_root_key:
-            clear(CryptoUtils._session_root_key)
-        if CryptoUtils._session_private_key:
-            clear_key(CryptoUtils._session_private_key)
-        if CryptoUtils._session_public_key:
-            clear(CryptoUtils._session_public_key)
-        if CryptoUtils._session_peer_public:
-            clear(CryptoUtils._session_peer_public)
+        if self._session_root_key:
+            clear(self._session_root_key)
+        if self._session_private_key:
+            clear_key(self._session_private_key)
+        if self._session_public_key:
+            clear(self._session_public_key)
+        if self._session_peer_public:
+            clear(self._session_peer_public)
 
-        CryptoUtils._session_root_key = None
-        CryptoUtils._session_private_key = None
-        CryptoUtils._session_public_key = None
-        CryptoUtils._session_peer_public = None
-        CryptoUtils._session_seq_limit = 0
+        self._session_root_key = None
+        self._session_private_key = None
+        self._session_public_key = None
+        self._session_peer_public = None
+        self._session_seq_limit = 0
         gc.collect()
         gc.collect()

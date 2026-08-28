@@ -1,7 +1,7 @@
 # PyEndCrypt
 用Python写的端到端加密工具，采用混合加密，实现了双棘轮的***核心机制***（注意不是完全实现）。
 对数据进行双重校验，每条消息单独一个密钥。
-使用简单，和平常使用socket套接字步骤差不多。
+使用简单，和平常使用异步socket套接字步骤差不多。
 
 本项目适合想了解密码学的开发人员，提供有ECC和AES加解密供研究。如果你想，可以根据下文[API](#api)进行二次开发。
 
@@ -26,6 +26,7 @@
 - 消息密钥层级，会话根密钥 + 每条消息独立派生密钥。
 - 自动密钥刷新，每5条消息自动更新根密钥，提供前向和后向安全性。
 - 自动从内存中清理敏感数据。
+- 实现多客户端并发处理，客户端之间的密钥数据隔离。
 
 ## 🚨 警告
 
@@ -46,6 +47,21 @@
 
 ---
 
+## 密钥层级
+> ```text
+> 临时密钥对 (X25519)
+> ↓ DH 交换
+> 共享密钥 (Shared Secret)
+> ↓ HKDF
+> 会话根密钥 (Root Key) ← 每5条消息自动刷新
+> ↓ HKDF(seq)
+> 消息密钥1 消息密钥2 消息密钥3 ...
+> ↓ ↓ ↓
+> AES-GCM AES-GCM AES-GCM
+> ```
+
+---
+
 ## ⚙️依赖安装
 ```bash
 pip install cryptography
@@ -56,6 +72,7 @@ pip install cryptography
 ## 🚀快速开始
 服务端
 ```python
+import asyncio
 from server import Server
 
 crt = "" # 服务端证书路径
@@ -64,34 +81,43 @@ ca_crt = "" # CA 证书路径
 ca_key = "" # CA 密钥路径
 padding = 0 # 数据包填充级别
 
-server = Server("127.0.0.1",
-                5555,
-                crt,
-                key,
-                ca_crt, 
-                ca_key, 
-                padding)
-server.accept()
-server.send("Hello From Server")
-data = server.receive()
-print(data)
-server.close()
+async def main():
+    server = Server("127.0.0.1",
+                    5555,
+                    crt,
+                    key,
+                    ca_crt, 
+                    ca_key, 
+                    padding)
+    conn = await server.accept()
+    await conn.send("Hello From Server")
+    data = await conn.receive()
+    print(data)
+    await conn.close()
+    
+if __name__ == "__main__":
+    asyncio.run(main())
 ```
 
 客户端
 ```python
+import asyncio
 from client import Client
 
 ca_crt = "" # CA 证书路径
 
-client = Client("127.0.0.1",
-                5555,
-                ca_crt)
-client.connect()
-data = client.receive()
-print(data)
-client.send("Hello From Client")
-client.close()
+async def main():
+    client = Client("127.0.0.1",
+                    5555,
+                    ca_crt)
+    await client.connect()
+    data = await client.receive()
+    print(data)
+    await client.send("Hello From Client")
+    await client.close()
+
+if __name__ == "__main__":
+    asyncio.run(main())
 ```
 
 关于各个证书和密钥，如果是测试环境，可以使用`tools/generator.py`一键生成。
@@ -141,7 +167,7 @@ client.close()
 │ 阶段1: TCP 连接建立 (普通连接，用于证书分发)                                  │
 └───────────────────────────────────────────────────────────────────────────────┘
 
-    Client(5555)                                    Server(5555)
+    Client                                              Server
         │                                                │
         │  ──── SYN ────────────────────────────────────> │
         │  <─── SYN-ACK ───────────────────────────────── │
@@ -354,18 +380,18 @@ client.close()
 ### CryptoUntils
 加密工具类，所有加密和解密，以及密钥生成均在这里实现<br>
 方法:
-- `generate_keypair()`: 生成临时密钥对
-- `init_session(peer_public_key)`: 初始化会话，生成根密钥
-- `refresh_session(peer_public_key)`: 刷新会话根密钥
-- `derive_message_key(seq)`: 从根密钥派生消息密钥
-- `derive_shared_key(private_key: X25519PrivateKey, peer_public_bytes: bytes)`: 用 X25519 密钥派生出共享密钥
-- `shared_key_derive_aes_key(shared_key: bytes, salt: bytes)`: 从共享密钥中派生出 AES 密钥
-- `_pack(data: bytes, seq: int)`: 将8字节时间戳和4字节序列号打包进数据中
-- `_unpack(data: bytes)`: 解包数据
-- `_verify(timestamp: int, seq: int, data_seq: int, window=TIMEOUT)`: 数据校验
-- `aes_encrypt(peer_public_key: bytes, data: bytes, seq: int)`: 使用 AES 私钥加密数据
-- `aes_decrypt(data: bytes, seq: int, private_key: X25519PrivateKey)`: 使用 AES 私钥解密数据
-- `clear_session()`: 清除会话密钥
+- `generate_keypair(self)`: 生成临时密钥对
+- `init_session(self, peer_public_key)`: 初始化会话，生成根密钥
+- `refresh_session(self, peer_public_key)`: 刷新会话根密钥
+- `derive_message_key(self, seq)`: 从根密钥派生消息密钥
+- `derive_shared_key(self, private_key: X25519PrivateKey, peer_public_bytes: bytes)`: 用 X25519 密钥派生出共享密钥
+- `shared_key_derive_aes_key(self, shared_key: bytes, salt: bytes)`: 从共享密钥中派生出 AES 密钥
+- `_pack(self, data: bytes, seq: int)`: 将8字节时间戳和4字节序列号打包进数据中
+- `_unpack(self, data: bytes)`: 解包数据
+- `_verify(self, timestamp: int, seq: int, data_seq: int, window=TIMEOUT)`: 数据校验
+- `aes_encrypt(self, peer_public_key: bytes, data: bytes, seq: int)`: 使用 AES 私钥加密数据
+- `aes_decrypt(self, data: bytes, seq: int, private_key: X25519PrivateKey)`: 使用 AES 私钥解密数据
+- `clear_session(self)`: 清除会话密钥
 
 ---
 
@@ -373,29 +399,39 @@ client.close()
 加密客户端<br>
 方法:
 - `Client(self, host: str, port: int, ca_cert: str, padding: int = 0, encoding: str = "utf-8")`: 创建客户端
-- `_negotiate()`: 预先协商
-- `_handshake()`: 建立加密握手
-- `_refresh_keypair()`: 重新交换密钥
-- `connect()`: 连接服务器并完成握手
+- `_negotiate(self)`: 预先协商
+- `_handshake(self)`: 进行加密握手
+- `_refresh_keypair(self)`: 重新交换密钥
+- `_upgrade_ssl(self)`: 升级当前连接为 SSL
+- `connect(self)`: 连接服务器并完成握手
 - `send(data)`: 加密数据并发送
-- `receive()`: 接收数据并解密
-- `close()`: 关闭连接
+- `receive(self)`: 接收数据并解密
+- `close(self)`: 关闭连接
 
 ---
 
 ### Server
 加密服务端<br>
 方法:
-- `Server(self, host: str, port: int, listen: int, server_cert: str, server_key: str, ca_cert:str, ca_key: str, padding: int = 0, encoding: str = "utf-8")`: 创建服务端
-- `_negotiate()`: 预先协商
-- `_handshake()`: 建立加密握手
-- `_refresh_keypair()`: 重新交换密钥
-- `accept()`: 接受连接并完成握手
-- `send(data)`: 加密数据并发送
-- `receive()`: 接收数据并解密
-- `close()`: 关闭连接
+- `Server(self, host: str, port: int, server_cert: str, server_key: str, ca_cert:str, ca_key: str, padding: int = 0, encoding: str = "utf-8")`: 创建服务端
+- `_setup_ssl_context()`: 设置 SSL 上下文
+- `_handle_connection(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter)`: 处理客户端连接
+- `accept(self)`: 接受连接并完成握手
+- `stop()`: 关闭服务端
 
 ---
+
+### ClientHandler
+客户端处理器<br>
+方法:
+- `_negotiate(self)`: 预先协商
+- `_handshake(self)`: 进行加密握手
+- `_refresh_keypair(self)`: 刷新会话根密钥
+- `_upgrade_ssl(self)`: 升级当前连接为 SSL
+- `pre_handshake(self)`: 预先握手
+- `send(self, data, is_handshake: bool = False)`: 加密数据并发送
+- `receive(self)`: 接收数据并解密
+- `close(self)`: 关闭连接
 
 ### CredentialProvisioner
 证书密钥生成器<br>
@@ -403,13 +439,6 @@ client.close()
 - `Generator(self, ca_cert: str, ca_key: str)`: 创建生成器
 - `generate_cert(self, client_key)`: 生成客户端证书文件
 - `generate_key(self)`: 生成客户端密钥文件
-
----
-
-### SSLBuilder
-SSL 连接构建器<br>
-方法:
-- `Builder(self, cert: str, key: str, ca_cert: str, is_server)`: 创建构建器
 
 ---
 
@@ -429,6 +458,7 @@ PyEndCrypt/
     ├── generator.py     # 证书密钥全生成器
     ├── exceptions.py    # 所有异常的基类
     ├── secure_memory.py # 内存清理工具
+    ├── ClientHandler.py # 客户端处理器
     └── __init__.py
 ```
 
@@ -443,9 +473,10 @@ PyEndCrypt/
 - ⚫ ~~添加服务端自动生成证书和密钥返回给客户端~~（完成）
 - ⚫ ~~优化异常处理~~（完成）
 - ⚫ ~~从内存中销毁密钥~~（完成）
+- ⚫ ~~实现异步~~（完成）
+- ⚫ ~~实现处理多个客户端~~（完成）
 - 🟡 增加心跳机制
-- 🟡 实现异步
-- 🟡 实现处理多个客户端
+- 🟡 用`Electron`框架和中继服务器搭建聊天室
 
 ---
 

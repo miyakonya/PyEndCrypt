@@ -15,6 +15,7 @@ import struct
 from secrets import token_bytes
 from .exceptions import *
 import random
+import asyncio
 
 class NetworkBase:
     def __init__(self, padding: int,
@@ -30,44 +31,26 @@ class NetworkBase:
         if padding < 0 or padding > 2:
             raise PaddingError("填充方式不存在")
         self.encoding = encoding
-        self.ssl_sock = None
-        self.sock = None
         self.MAX_SIZE = 1024 * 1024 # 最大包大小为1MB
         self.padding = padding
         self.padding_size = 128 # 设定填充块大小为128字节
+        self.reader: asyncio.StreamReader | None = None
+        self.writer: asyncio.StreamWriter | None = None
 
-    def setEncoding(self, encoding: str):
-        self.encoding = encoding
-
-    def setPadding(self, padding: int):
-        self.padding = padding
-
-    def _get_socket(self):
-        if self.ssl_sock:
-            return self.ssl_sock
-        return self.sock
-
-    def _recv_exact(self, n: int) -> bytes:
+    async def _recv_exact(self, n: int) -> bytes:
         """
         精确接收n个字节的数据
         :param n: 接收字节
         :return: 数据
         """
-        sock = self._get_socket()
+        if self.reader is None:
+            raise ConnectionError("连接未建立")
         if n > self.MAX_SIZE:
             raise PacketTooLargeError("接收到了过大的数据包！")
-
-        if not self.ssl_sock and not self.sock:
-            raise SocketNotInitializedError("Socket没有初始化")
-        data = b''
-        while (len(data)) < n:
-            chunk = sock.recv(n - len(data))
-            data += chunk
-            if not chunk:
-                raise ConnectionLostError("连接已断开")
+        data = await self.reader.readexactly(n)
         return data
 
-    def _add_padding(self, data: bytes) -> bytes:
+    async def _add_padding(self, data: bytes) -> bytes:
         """
         填充数据
         数据格式：[总长度(4字节)] + [数据实际总长(4字节)] + 数据 + 填充
@@ -91,7 +74,7 @@ class NetworkBase:
             data += token_bytes(padding_len)
         return data
 
-    def _remove_padding(self, data: bytes) -> bytes:
+    async def _remove_padding(self, data: bytes) -> bytes:
         """
         去除填充的数据
         :param data: 需要去除填充的数据
@@ -105,15 +88,14 @@ class NetworkBase:
         result = data[4:4 + original_len]
         return result
 
-    def _send_raw(self, data) -> None:
+    async def _send_raw(self, data) -> None:
         """
         发送数据
         :param data:要发送的数据
         :return: 无
         """
-        if not self.ssl_sock and not self.sock:
-            raise SocketNotInitializedError("Socket没有初始化")
-        sock = self._get_socket()
+        if self.writer is None:
+            raise ConnectionError("连接未建立")
         if isinstance(data, str):
             data = data.encode(self.encoding)
         elif isinstance(data, bytes):
@@ -125,28 +107,32 @@ class NetworkBase:
             raise PacketTooLargeError("发送的数据包太大！")
         header = struct.pack("!I", length)
         data = header + data
-        sock.sendall(data)
+        self.writer.write(data)
+        await self.writer.drain()
 
-    def _recv_raw(self) -> bytes:
+    async def _recv_raw(self) -> bytes:
         """
         接收数据
         :return: 接收到的数据
         """
-        if not self.ssl_sock and not self.sock:
-            raise SocketNotInitializedError("Socket没有初始化")
         try:
             # 接收数据总长度
-            header = self._recv_exact(4)
+            header = await self._recv_exact(4)
             length = struct.unpack("!I", header)[0]
-            body = self._recv_exact(length)
+            body = await self._recv_exact(length)
             if len(body) > self.MAX_SIZE:
                 raise PacketTooLargeError("接收到了过大的数据包！")
             return body
+        except asyncio.IncompleteReadError as e:
+            if e.expected == 4 and e.partial == b'':
+                raise ConnectionLostError("客户端断开连接")
         except (PacketTooLargeError, ConnectionLostError, SocketNotInitializedError):
             raise
         except Exception as e:
             raise ConnectionLostError(f"接收数据包失败: {e}") from e
-    def close(self):
-        if self.ssl_sock:
-            self.ssl_sock.close()
-            self.ssl_sock = None
+    async def close(self):
+        if self.writer:
+            self.writer.close()
+            await self.writer.wait_closed()
+            self.reader = None
+            self.writer = None
