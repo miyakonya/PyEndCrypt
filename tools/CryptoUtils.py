@@ -122,7 +122,7 @@ class CryptoUtils:
         :return: 打包好的数据
         """
         timestamp = int(time.time())
-        timestamp_byte = struct.pack("!Q", timestamp)   # 8位时间戳
+        timestamp_byte = struct.pack("!Q", timestamp)   # 8字节时间戳
         seq_bytes = struct.pack("!I", seq)  # 4字节序列号
         return timestamp_byte + seq_bytes + data
 

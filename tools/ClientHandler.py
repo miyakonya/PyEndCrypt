@@ -1,3 +1,16 @@
+"""
+Copyright (c) 2026 super cat
+This source code is licensed under the MIT license found in the
+LICENSE file in the root directory of this source tree.
+"""
+
+"""
+加密工具类，所有的加密和解密逻辑都在这里
+"""
+
+# coding: UTF-8
+# Python 3.14.7
+
 from tools.NetworkBase import NetworkBase
 from tools.CryptoUtils import CryptoUtils
 from tools.Logger import Logger
@@ -9,7 +22,7 @@ import gc
 import asyncio
 
 class ClientHandler(NetworkBase):
-    """客户端处理器（支持 STARTTLS 升级）"""
+    """客户端处理器"""
 
     def __init__(self, reader: asyncio.StreamReader,
                  writer: asyncio.StreamWriter,
@@ -17,8 +30,8 @@ class ClientHandler(NetworkBase):
                  generator: Generator,
                  ssl_context: ssl.SSLContext):
         super().__init__(padding, encoding)
-        self.reader = reader
-        self.writer = writer
+        self.reader: asyncio.StreamReader = reader
+        self.writer: asyncio.StreamWriter = writer
         self.generator = generator
         self.ssl_context = ssl_context
         self.logger = Logger(__name__).getLogger()
@@ -93,6 +106,7 @@ class ClientHandler(NetworkBase):
             self.is_refreshing = False
 
     async def _upgrade_ssl(self):
+        """升级当前连接为 SSL"""
         self.logger.info("开始升级为 SSL...")
 
         await self.writer.start_tls(
