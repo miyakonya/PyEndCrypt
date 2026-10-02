@@ -3,6 +3,7 @@ Copyright (c) 2026 super cat
 This source code is licensed under the MIT license found in the
 LICENSE file in the root directory of this source tree.
 """
+import secrets
 
 # coding: UTF-8
 # Python 3.14.7
@@ -59,6 +60,7 @@ class Server(NetworkBase):
         self.ca_key = ca_key
         self._server = None
         self._pending_connections = None
+        self.secret_key = secrets.token_bytes(16)  # 生成连接密钥
 
     def _setup_ssl_context(self):
         """设置 SSL 上下文"""

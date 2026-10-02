@@ -4,9 +4,7 @@ This source code is licensed under the MIT license found in the
 LICENSE file in the root directory of this source tree.
 """
 
-"""
-加密工具类，所有的加密和解密逻辑都在这里
-"""
+"""客户端处理器"""
 
 # coding: UTF-8
 # Python 3.14.7
@@ -22,8 +20,6 @@ import gc
 import asyncio
 
 class ClientHandler(NetworkBase):
-    """客户端处理器"""
-
     def __init__(self, reader: asyncio.StreamReader,
                  writer: asyncio.StreamWriter,
                  padding: int, encoding: str,
@@ -45,6 +41,10 @@ class ClientHandler(NetworkBase):
         self.is_ready = False
         self._closed = False
         self.crypto = CryptoUtils()
+        self._refresh_ack_event = None
+        self._write_lock = asyncio.Lock()
+        self._refresh_done = asyncio.Event()
+        self._refresh_done.set()
 
     async def _negotiate(self):
         """预先协商"""
@@ -95,6 +95,7 @@ class ClientHandler(NetworkBase):
             return
         self.is_refreshing = True
         try:
+            self._refresh_done.clear()
             self.logger.info("开始刷新会话根密钥")
             self.crypto.refresh_session(self.client_public_key)
             self.crypto._session_seq_limit += 5
@@ -103,6 +104,7 @@ class ClientHandler(NetworkBase):
             self.logger.error(f"密钥刷新失败: {e}")
             raise
         finally:
+            self._refresh_done.set()
             self.is_refreshing = False
 
     async def _upgrade_ssl(self):
@@ -157,17 +159,22 @@ class ClientHandler(NetworkBase):
         """发送数据"""
         if not self.is_ready and not is_handshake:
             raise HandshakeError("连接尚未准备好，请先完成握手")
-
         if self._closed:
             raise ConnectionError("连接已关闭")
-
         if self.seq > self.crypto._session_seq_limit and not self.is_refreshing:
             self.pending_refresh = True
 
-        if self.pending_refresh and not self.is_refreshing:
-            self.logger.info("执行待处理的密钥刷新")
-            await self._refresh_keypair()
-            self.pending_refresh = False
+        # 检查是否需要刷新密钥
+        while True:
+            await self._refresh_done.wait()
+            if self.is_refreshing:
+                continue
+            if self.pending_refresh:
+                self.logger.info("执行待处理的密钥刷新")
+                await self._refresh_keypair()
+                self.pending_refresh = False
+                continue
+            break
 
         if not isinstance(data, bytes):
             data = str(data).encode(self.encoding)
@@ -175,7 +182,8 @@ class ClientHandler(NetworkBase):
             data = await self._add_padding(data)
 
         edata = self.crypto.aes_encrypt(self.client_public_key, data, self.seq)
-        await self._send_raw(edata)
+        async with self._write_lock:
+            await self._send_raw(edata)
         self.logger.info(f"当前序列号: {self.seq}")
         self.logger.info(f"[Server]->[Client]: 发送{len(data)}字节")
         self.seq += 1
@@ -204,7 +212,12 @@ class ClientHandler(NetworkBase):
             self.crypto.refresh_session(self.client_public_key)
             self.crypto._session_seq_limit += 5
             self.logger.info("密钥刷新完成")
-            raw_data = await self._recv_raw()
+            return None
+
+        if raw_data == b"REFRESH_ACK":
+            if self._refresh_ack_event:
+                self._refresh_ack_event.set()
+            return None
 
         try:
             data = self.crypto.aes_decrypt(raw_data, self.seq, self.private_key)

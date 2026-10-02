@@ -18,6 +18,7 @@ from shutil import rmtree
 import os
 import gc
 import asyncio
+import tempfile
 
 class Client(NetworkBase):
     def __init__(self, host: str,
@@ -52,6 +53,11 @@ class Client(NetworkBase):
         self.ssl_context = None
         self.is_ssl = False
         self.crypto = CryptoUtils()
+        self._refresh_ack_event = None  # 密钥刷新事件
+        self._write_lock = asyncio.Lock()
+        self._refresh_done = asyncio.Event()
+        self._refresh_done.set()    # 密钥刷新完毕标志位
+        self.tmp_dir = os.path.join(tempfile.gettempdir(), "tmp_cert_key")
 
     async def _negotiate(self):
         """预先协商"""
@@ -95,7 +101,7 @@ class Client(NetworkBase):
         self.ssl_context.minimum_version = ssl.TLSVersion.TLSv1_3
         self.ssl_context.maximum_version = ssl.TLSVersion.TLSv1_3
         self.ssl_context.load_verify_locations(self.ca_cert)
-        self.ssl_context.load_cert_chain("tmp_cert_key/client.crt", "tmp_cert_key/client.key")
+        self.ssl_context.load_cert_chain(f"{self.tmp_dir}\\client.crt", f"{self.tmp_dir}\\client.key")
         self.ssl_context.verify_mode = ssl.CERT_REQUIRED
         await self.writer.start_tls(
             self.ssl_context,
@@ -110,7 +116,7 @@ class Client(NetworkBase):
         )
         self.reader = reader
         self.writer = writer
-        self.logger.info("连接证成功")
+        self.logger.info("连接成功")
         await self._negotiate()
         self.logger.info("===== 预先握手开始 =====")
         await self._handshake()
@@ -122,10 +128,10 @@ class Client(NetworkBase):
         self.logger.info(f"密钥接收完毕，共{len(self.client_key)}字节")
         self.logger.info(f"证书接收完毕，共{len(self.client_cert)}字节")
 
-        os.mkdir("tmp_cert_key")
-        with open("tmp_cert_key/client.key", "w+") as kw:
+        os.makedirs(self.tmp_dir, exist_ok=True)
+        with open(f"{self.tmp_dir}\\client.key", "w+") as kw:
             kw.write(self.client_key)
-        with open("tmp_cert_key/client.crt", "w+") as cw:
+        with open(f"{self.tmp_dir}\\client.crt", "w+") as cw:
             cw.write(self.client_cert)
         if not self.client_cert or not self.client_key:
             raise HandshakeError("无法接收到证书和密钥")
@@ -136,7 +142,7 @@ class Client(NetworkBase):
         if response != b"READY":
             raise Exception(f"服务端拒绝升级 SSL: {response}")
         await self._upgrade_ssl()
-        rmtree("tmp_cert_key")
+        rmtree(self.tmp_dir)
 
         self.logger.info("SSL 加密完毕")
         self.logger.info("===== 端到端加密握手开始 =====")
@@ -152,13 +158,13 @@ class Client(NetworkBase):
             return
         self.is_refreshing = True
         try:
+            self._refresh_done.clear()
             self.logger.info("开始刷新会话根密钥")
+            self._refresh_ack_event = asyncio.Event()
             await self._send_raw(b"REFRESH_KEY")
             self.logger.info("等待 REFRESH_ACK...")
-            response = await self._recv_raw()
+            await asyncio.wait_for(self._refresh_ack_event.wait(), timeout=10)
             self.logger.info("收到响应")
-            if response != b"REFRESH_ACK":
-                raise Exception(f"服务端未确认刷新: {response[:20]}...")
             self.crypto.refresh_session(self.server_public_key)
             self.crypto._session_seq_limit += 5
             self.logger.info("密钥刷新完成")
@@ -167,25 +173,36 @@ class Client(NetworkBase):
             self.logger.error(f"密钥刷新失败: {e}")
             raise
         finally:
+            self._refresh_done.set()
             self.is_refreshing = False
+            self._refresh_ack_event = None
 
     async def send(self, data):
         if not self.handshake_done:
             raise HandshakeError("没有完成加密握手")
         if self.seq > self.crypto._session_seq_limit and not self.is_refreshing:
             self.pending_refresh = True
-        # 如果有待处理的刷新，先执行刷新
-        if self.pending_refresh and not self.is_refreshing:
-            self.logger.info("执行待处理的密钥刷新")
-            await self._refresh_keypair()
-            self.pending_refresh = False
+
+        # 检查是否需要刷新密钥
+        while True:
+            await self._refresh_done.wait()
+            if self.is_refreshing:
+                continue
+            if self.pending_refresh:
+                self.logger.info("执行待处理的密钥刷新")
+                await self._refresh_keypair()
+                self.pending_refresh = False
+                continue
+            break
+
         if not isinstance(data, bytes):
             data = str(data).encode(self.encoding)
         if self.padding != 0:
             data = await self._add_padding(data)
         edata = self.crypto.aes_encrypt(self.server_public_key, data, self.seq)
         # 发送已加密的数据
-        await self._send_raw(edata)
+        async with self._write_lock:
+            await self._send_raw(edata)
         self.logger.info(f"当前序列号: {self.seq}")
         self.logger.info(f"[Client]->[Server]: 发送{len(data)}字节")
         self.seq += 1
@@ -196,6 +213,10 @@ class Client(NetworkBase):
         if self.seq > self.crypto._session_seq_limit and not self.is_refreshing:
             self.pending_refresh = True
         raw_data = await self._recv_raw()
+        if raw_data == b"REFRESH_ACK":
+            if self._refresh_ack_event:
+                self._refresh_ack_event.set()
+            return None
         if raw_data == b"REFRESH_KEY":
             self.logger.info("收到服务端刷新请求")
             await self._send_raw(b"REFRESH_ACK")
@@ -203,7 +224,7 @@ class Client(NetworkBase):
             self.crypto._session_seq_limit += 5
             self.pending_refresh = False
             self.logger.info("密钥刷新完成")
-            raw_data = await self._recv_raw()
+            return None
         try:
             data = self.crypto.aes_decrypt(raw_data, self.seq, self.private_key)
             if self.padding != 0:
