@@ -1,12 +1,12 @@
 # PyEndCrypt
 
-用 Python 写的端到端加密通信工具。基于 X25519 + AES-256-GCM 的混合加密，在 TLS 之上再叠一层应用层加密，双向密钥自动轮换，每条消息使用独立派生的密钥。
+用 Python 写的端到端加密通信工具。**TLS 1.3 + external PSK 认证**，在认证通道内再叠一层应用层 AES-256-GCM（X25519 交换 + 每条消息独立密钥 + 双向自动轮换）。
 
-定位是**端到端加密的临时通信通道**，用于传输敏感数据。
+定位是**端到端加密的临时通信通道**，用于在互相信任的少数几方之间传输敏感数据。
 
-项目目前仍处于开发阶段，如果你想参与开发请看下文[工作清单](#工作清单)
+项目目前仍处于开发阶段，如果你想参与开发请看下文[工作清单](#-工作清单)
 
-> 本项目适合想了解密码工程实践、或需要一条「开箱即用的加密信道」的开发者。全部加密逻辑集中在 `tools/CryptoUtils.py`，可以按下面的 [API](#-api) 自行二次开发。
+> 本项目适合想了解密码工程实践、或需要一条「开箱即用的加密信道」的开发者。全部加密逻辑集中在 `tools/CryptoUtils.py`，TLS 与 PSK 认证集中在 `Server` / `Client` / `ClientHandler`，可以按下面的 [API](#-api) 自行二次开发。
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
@@ -14,15 +14,14 @@
 
 ## 💡特点
 
-- **端到端加密**：X25519 密钥交换 + AES-256-GCM 认证加密。
-- **双层加密**：传输层 TLS 1.3，应用层再套一层独立密钥的 AES-GCM。两层密钥来源完全独立。
-- **可选 mTLS**：`auth_mode=0` 时启用双向证书认证，客户端证书由服务端在连接建立时动态签发。
-- **PSK 准入认证**：TLS 之前先做一次 HMAC-SHA256 挑战应答，没有正确 PSK 连不上。
+- **PSK 就是唯一凭据**：双方预共享一个 PSK，认证在 TLS 握手内部完成（TLS 1.3 external PSK）。
+- **认证失败发生在握手阶段**：PSK 不对，TLS 握手直接失败，攻击者拿不到任何已认证的连接。
+- **应用层再加密**：TLS 之上叠一层独立密钥来源的 AES-256-GCM（X25519 + HKDF），两层密钥完全独立。
 - **每条消息独立密钥**：由「会话根密钥 + 序列号」通过 HKDF-SHA256 派生。
 - **双向自动密钥轮换**：任意一方发满 5 条消息即触发一次重新交换临时密钥，双方同时切换；同时发起也能正确收敛。
 - **双重重放防护**：密文内打包 8 字节时间戳 + 4 字节序列号，接收端两者都校验。
 - **数据包大小伪造**：可选的固定长度填充 / 随机长度填充，掩盖真实报文长度。
-- **失败即断开**：任一条消息解密或校验失败，立即终止该连接，不留下「还连着但读不出数据」的中间状态。
+- **失败即断开**：任一条消息解密或校验失败，立即终止该连接。
 - **内存清理**：敏感字节尽力清零并主动触发 GC。
 
 ## 🚨 已知局限
@@ -30,31 +29,34 @@
 请在采用前读完这一节。
 
 - **不能真正从内存中清除敏感数据**。Python 的 `bytes` 不可变，`tools/secure_memory.py` 对 `bytes` 入参只能清零一个临时副本；只有 `bytearray` 才能真正被覆盖。代码里已尽量用 `bytearray` 承载密钥，但无法覆盖全部路径。
-- **不是完整的双棘轮**。「每条消息独立密钥 + 定期重新交换临时密钥」实现了棘轮的核心效果（前向安全 + 刷新后的后向安全），但没有对称棘轮的链式推进。
 - **不支持乱序与丢包恢复**。序列号必须严格连续，收到断裂的序列号会按重放攻击处理并终止连接。底层是 TCP/TLS，正常不会乱序。
 - **没有断线重连**。`Client` 断开后需要重新 `connect()`。
-- **`Server.stop()` 目前不会关闭已建立的客户端连接**（只关闭监听）。已知问题，见[工作清单](#-工作清单)。
-- **动态签发的客户端证书序列号固定为 `02`**，不支持按证书吊销。
-- **PSK 需要带外传递**。服务端生成后写进日志，代码里没有分发通道，需要你自己传给客户端。
+- **没有心跳机制**。空闲连接不会自动探测存活。
 
 ---
 
 ## 🔐加密方案
 
-| 环节     | 算法                                 |
-| -------- | ------------------------------------ |
-| 准入认证 | HMAC-SHA256 挑战应答（PSK）          |
-| 传输层   | TLS 1.3（可选 mTLS）                 |
-| 密钥交换 | X25519（256 位临时密钥）             |
-| 密钥派生 | HKDF-SHA256                          |
-| 数据加密 | AES-256-GCM                          |
-| 完整性   | AES-GCM 认证标签 + 时间戳/序列号校验 |
+| 环节     | 算法                                                   |
+| -------- | ------------------------------------------------------ |
+| 准入认证 | TLS 1.3 external PSK（身份 + 预共享密钥，binder 校验） |
+| 传输层   | TLS 1.3（`psk_dhe_ke`，带 ECDHE，具备前向安全）        |
+| 密钥交换 | X25519（应用层，256 位临时密钥）                       |
+| 密钥派生 | HKDF-SHA256                                            |
+| 数据加密 | AES-256-GCM                                            |
+| 完整性   | TLS 记录层 + AES-GCM 认证标签 + 时间戳/序列号校验      |
+
+> **关于两层的关系**：TLS 1.3 + PSK 已经提供了经过认证的加密通道；应用层的 X25519 + AES-GCM 是**额外**的一层（密钥来源与 TLS 完全独立），主要用于防止 TLS 被中途终结。如果你只信任一条链路，可以把应用层看作冗余。
 
 ---
 
 ## 🔑密钥层级
 
 ```text
+PSK (双方带外共享, 1..64 字节)
+   ↓ TLS 1.3 external PSK 握手（binder 校验）
+经过认证的 TLS 通道
+   ↓ 通道内交换 X25519 临时公钥
 临时密钥对 (X25519, 每次握手/轮换重新生成)
    ↓ DH(自己的新私钥, 对方的新公钥)
 共享密钥 (Shared Secret)
@@ -76,16 +78,17 @@ AES-GCM   AES-GCM   AES-GCM     ← 每条消息一个密钥 + 独立随机 nonc
 pip install cryptography
 ```
 
-`auth_mode=0` 需要系统中有 `openssl` 可执行文件（用于动态签发客户端证书）。
-
 ---
 
 ## 🚀快速开始
 
-先生成一套测试用证书：
+### 1. 生成 PSK
 
-```bash
-python tools/generator.py
+没有任何证书要生成。PSK 由你自己生成（或由服务端生成后带外交给客户端）：
+
+```python
+import secrets
+psk = secrets.token_bytes(32)      # TLS 1.3 要求 1..64 字节
 ```
 
 ### 服务端
@@ -94,19 +97,17 @@ python tools/generator.py
 import asyncio
 from server import Server
 
+PSK = b"\x01\x02..."     # 与服务端共享的那个 PSK，务必带外安全传递
+
 async def main():
     server = Server(
         host="127.0.0.1",
         port=5555,
-        server_cert="keys/server/server.crt",
-        server_key="keys/server/server.key",
-        ca_cert="keys/ca.crt",
-        ca_key="keys/ca.key",
+        psk_key=PSK,
         padding=1,        # 数据包填充级别：0 不填充 / 1 固定 / 2 随机
-        auth_mode=1       # 0 = 证书 + PSK ，1 = 仅 PSK
     )
 
-    conn = await server.accept()          # 阻塞直到有客户端连入并完成握手
+    conn = await server.accept()          # 阻塞直到有客户端通过 PSK 认证
     print("客户端已连接")
 
     data = await conn.receive()           # 收到字符串；None 表示断开
@@ -127,15 +128,16 @@ if __name__ == "__main__":
 import asyncio
 from client import Client
 
+PSK = b"\x01\x02..."     # 与服务端一致
+
 async def main():
     client = Client(
         host="127.0.0.1",
         port=5555,
-        ca_cert="keys/ca.crt",
-        psk_key="把服务端日志里的 PSK 填这里"
+        psk_key=PSK,
     )
 
-    await client.connect()
+    await client.connect()                # PSK 不对会在这里直接失败
 
     await client.send("Hello From Client")
     print(await client.receive())
@@ -146,11 +148,8 @@ if __name__ == "__main__":
     asyncio.run(main())
 ```
 
-> **关于 PSK**：服务端启动时用 `secrets.token_urlsafe(32)` 生成，并打印在日志里（`PSK 密钥已生成: ...`），同时在 `server.psk_key` 上可读。目前需要你把它带外交给客户端。
-
-### 用 `auth_mode=0` 时会多发生什么
-
-服务端会在握手后动态签发一份客户端证书，通过已加密的应用层通道下发给客户端；客户端写入临时目录、用它完成 mTLS，随后删除临时文件。你不需要预先准备客户端证书，只要有 CA 证书即可。
+> **关于 PSK 认证**：认证发生在 `writer.start_tls()` 那一刻。PSK 不一致时 TLS 握手失败，
+> 客户端抛 `ssl.SSLError`，服务端日志记录握手失败。**没有「握手成功后才发现 PSK 不对」的路径。**
 
 ---
 
@@ -204,42 +203,39 @@ if __name__ == "__main__":
   │                                             │
   │ ── TCP 连接 ──────────────────────────────> │
   │                                             │
-  │ ── 阶段 1：协商 ───────────────────────────> │
-  │ <─ 编码格式 / 填充级别 / 认证模式 ────────── │
+  │ ── 阶段 1：协商（明文）───────────────────> │
+  │ <─ 编码格式 / 填充级别 ──────────────────── │
   │ ── "OK" ──────────────────────────────────> │
   │                                             │
-  │ ── 阶段 2：PSK 准入认证（TLS 之前，明文）──> │
-  │ <─ 32 字节随机挑战 ──────────────────────── │
-  │ ── HMAC-SHA256(PSK, challenge) ───────────> │
-  │ <─ "OK" / "AuthFailed" ─────────────────── │
+  │ ── 阶段 2：STARTTLS ───────────────────────> │
+  │ <─ "READY" ──────────────────────────────── │
   │                                             │
-  │ ── 阶段 3：第一次 X25519 握手 ─────────────> │
+  │ ══ 阶段 3：TLS 1.3 + PSK 认证 ═════════════ │
+  │    writer.start_tls(带 PSK 回调的 context)  │
+  │    ← PSK 不对就在这里失败，后面的阶段不会发生 │
+  │                                             │
+  │ ── 阶段 4：应用层 X25519 握手（TLS 通道内）─> │
   │ <─ 交换临时公钥，双方各自 init_session ──── │
+  │ ── "Client Hello" ────────────────────────> │
+  │ <─ "Server Hello" ───────────────────────── │
   │                                             │
-  │ ── 阶段 4：证书分发（仅 auth_mode=0）──────> │
-  │ <─ 加密下发的 client.key / client.crt ──── │
-  │                                             │
-  │ ── 阶段 5：STARTTLS 原位升级 ──────────────> │
-  │ <─ "READY"，随后 writer.start_tls() ────── │
-  │                                             │
-  │ ── 阶段 6：第二次 X25519 握手（TLS 内）───> │
-  │ <─ 重新交换临时公钥，序列号归 1 ────────── │
-  │                                             │
-  │ ══ 阶段 7：加密通信 ═══════════════════════ │
+  │ ══ 阶段 5：加密通信 ═══════════════════════ │
   │ ── 每条消息独立密钥的 AES-GCM ────────────> │
   │ <─ 双方各自发满 5 条即自动轮换密钥 ─────── │
   │                                             │
   │ ── 关闭 ──────────────────────────────────> │
 ```
 
-**密钥轮换的控制帧**走明文长度帧（不经应用层加密），因此不消耗序列号：
+**控制帧**（密钥轮换）走明文长度帧，因此不消耗应用层序列号：
 
 ```text
 REFRESH_KEY  + 我方新公钥(32)      # 发起轮换
 REFRESH_ACK  + 我方新公钥(32)      # 响应轮换
 ```
 
-任一方都可发起；若双方恰好同时发起，两端会复用各自已发出的公钥完成提交，收敛到同一会话（这一点有专门的回归测试覆盖）。
+任一方都可发起；若双方恰好同时发起，两端会复用各自已发出的公钥完成提交，收敛到同一会话（这一点有专门的回归验证覆盖）。
+
+> 注意：控制帧不受 TLS 记录层之外的额外保护；在 TLS 之内传输，因此依赖 TLS 保证完整性。
 
 ---
 
@@ -257,7 +253,7 @@ REFRESH_ACK  + 我方新公钥(32)      # 响应轮换
 | `_add_padding(data)` / `_remove_padding(data)` | 填充与去填充             |
 | `close()`                                      | 关闭底层连接             |
 
-### `CryptoUtils` — 全部加密逻辑
+### `CryptoUtils` — 应用层加密逻辑
 
 | 方法                                                                | 说明                                           |
 | ------------------------------------------------------------------- | ---------------------------------------------- |
@@ -269,36 +265,33 @@ REFRESH_ACK  + 我方新公钥(32)      # 响应轮换
 | `shared_key_derive_aes_key(shared_key, salt)`                       | 由共享密钥派生 AES 密钥                        |
 | `aes_encrypt(data, seq)`                                            | 加密，返回 `nonce + 公钥 + 密文`               |
 | `aes_decrypt(data, seq, private_key)`                               | 解密并校验时间戳与序列号                       |
-| `get_challenge_response(psk, challenge)`                            | 计算 PSK 挑战应答                              |
-| `verify_response(psk, challenge, response)`                         | 恒定时间比较应答                               |
 | `clear_session()`                                                   | 清除会话密钥                                   |
+
+> `get_challenge_response()` / `verify_response()` 是旧 PSK 挑战应答时代的遗留方法，现已无调用方。
 
 ### `Client` — 客户端
 
 ```python
-Client(host: str, port: int, ca_cert: str, psk_key: str)
+Client(host: str, port: int, psk_key: bytes)
 ```
 
-| 方法               | 说明                                    |
-| ------------------ | --------------------------------------- |
-| `await connect()`  | 连接并完成全部握手                      |
-| `await send(data)` | 加密并发送（发满 5 条自动触发一次轮换） |
-| `await receive()`  | 接收并解密；返回 `None` 表示对端已断开  |
-| `await close()`    | 关闭连接并清理密钥                      |
+| 方法               | 说明                                     |
+| ------------------ | ---------------------------------------- |
+| `await connect()`  | 连接并完成协商、TLS-PSK 认证与应用层握手 |
+| `await send(data)` | 加密并发送（发满 5 条自动触发一次轮换）  |
+| `await receive()`  | 接收并解密；返回 `None` 表示对端已断开   |
+| `await close()`    | 关闭连接并清理密钥                       |
 
 ### `Server` — 服务端
 
 ```python
-Server(host, port, server_cert="", server_key="",
-       ca_cert="", ca_key="", padding=0, auth_mode=0, encoding="utf-8")
+Server(host, port, psk_key: bytes, padding=0, encoding="utf-8")
 ```
 
-| 方法             | 说明                                                     |
-| ---------------- | -------------------------------------------------------- |
-| `await accept()` | 启动监听并等待一个已完成握手的连接，返回 `ClientHandler` |
-| `await stop()`   | 停止监听                                                 |
-
-`auth_mode`：`0` = 证书 + PSK 双重认证（启用 mTLS）；`1` = 仅 PSK（关闭 mTLS）。传入其他值会抛 `ValueError`。
+| 方法             | 说明                                                        |
+| ---------------- | ----------------------------------------------------------- |
+| `await accept()` | 启动监听并等待一个通过 PSK 认证的连接，返回 `ClientHandler` |
+| `await stop()`   | 停止监听（不关闭已建立的连接）                              |
 
 ### `ClientHandler` — 服务端每个连接的处理器
 
@@ -310,17 +303,6 @@ Server(host, port, server_cert="", server_key="",
 | `await receive()`                      | 接收并解密；`None` 表示对端断开 |
 | `await close()`                        | 关闭连接                        |
 
-### `Generator` — 客户端证书签发
-
-```python
-Generator(ca_cert: str, ca_key: str)   # 需要系统中存在 openssl
-```
-
-| 方法                        | 说明                                |
-| --------------------------- | ----------------------------------- |
-| `generate_key()`            | 生成客户端私钥，返回 `(内容, 路径)` |
-| `generate_cert(client_key)` | 用 CA 签发客户端证书，返回内容      |
-
 ---
 
 ## 🏗️项目结构
@@ -329,16 +311,14 @@ Generator(ca_cert: str, ca_key: str)   # 需要系统中存在 openssl
 PyEndCrypt/
 ├── README.md
 ├── LICENSE
-├── server.py                        # 服务端：监听、接受连接
-├── client.py                        # 客户端：连接、握手、收发
+├── server.py                        # 服务端：监听、PSK 认证、接受连接
+├── client.py                        # 客户端：连接、STARTTLS、PSK 认证、收发
 └── tools/
-    ├── CryptoUtils.py               # 全部加解密与密钥派生
+    ├── CryptoUtils.py               # 应用层加解密与密钥派生
     ├── NetworkBase.py               # 定长收发基类 + 填充
     ├── ClientHandler.py             # 服务端单连接处理器
-    ├── CredentialProvisioner.py     # 动态签发客户端证书（依赖 openssl）
     ├── secure_memory.py             # 敏感内存清理
     ├── Logger.py                    # 日志（文件 + 控制台，同名复用）
-    ├── generator.py                 # 一键生成 CA / 服务端证书
     ├── exceptions.py                # 异常体系
     └── __init__.py
 ```
@@ -349,21 +329,20 @@ PyEndCrypt/
 
 已完成：
 
-- ⚫ ~~添加客户端身份验证~~（已由 TLS / mTLS + PSK 替代）
+- ⚫ ~~添加客户端身份验证~~（已改为 TLS 1.3 external PSK）
 - ⚫ ~~将 `print()` 替换为日志系统~~
-- ⚫ ~~服务端自动生成证书和密钥返回给客户端~~
+- ⚫ ~~服务端自动生成证书和密钥返回给客户端~~（证书体系已整体移除）
 - ⚫ ~~优化异常处理~~
 - ⚫ ~~从内存中销毁密钥~~（受 Python 限制，见[已知局限](#-已知局限)）
 - ⚫ ~~实现异步~~
 - ⚫ ~~实现多客户端并发处理~~
 - ⚫ ~~每条消息独立密钥 + 双向自动密钥轮换~~
+- ⚫ ~~移除 mTLS，改用 PSK 作为唯一凭据~~
 
 待办：
 
 - 🟡 `Server.stop()` 关闭已建立的客户端连接
 - 🟡 主动关闭指定客户端（`Server.close_client()`）
-- 🟡 动态签发证书的序列号唯一化（当前固定为 `02`）
-- 🟡 客户端证书临时文件的并发隔离（当前使用固定相对路径）
 - 🟡 断线重连
 - 🟡 心跳机制
 - 🟡 中转服务器

@@ -14,22 +14,18 @@ from tools.CryptoUtils import CryptoUtils
 from tools.Logger import Logger
 from tools.exceptions import HandshakeError
 from tools.secure_memory import clear, clear_key
-from tools.CredentialProvisioner import Generator
 import ssl
 import gc
 import asyncio
-import secrets
 
 class ClientHandler(NetworkBase):
     def __init__(self, reader: asyncio.StreamReader,
                  writer: asyncio.StreamWriter,
                  padding: int, encoding: str,
-                 generator: Generator,
                  ssl_context: ssl.SSLContext):
         super().__init__(padding, encoding)
         self.reader: asyncio.StreamReader = reader
         self.writer: asyncio.StreamWriter = writer
-        self.generator = generator
         self.ssl_context = ssl_context
         self.logger = Logger(__name__).getLogger()
         self.handshake_done = False
@@ -56,23 +52,38 @@ class ClientHandler(NetworkBase):
         self._rekey_waiter = None
         self._disconnected = False
 
-    async def _negotiate(self, auth_mode: int):
+    async def _negotiate(self):
         """预先协商"""
         self.logger.info("开始和客户端协商")
         await self._send_raw(self.encoding.encode("utf-8"))
         await self._send_raw(str(self.padding).encode(self.encoding))
-        await self._send_raw(str(auth_mode).encode(self.encoding))
         response = (await self._recv_raw()).decode(self.encoding)
         if response == "OK":
-            self.logger.info(f"协商完毕，填充方式: {self.padding}\t编码格式: {self.encoding}\t认证模式: {auth_mode}")
+            self.logger.info(f"协商完毕，填充方式: {self.padding}\t编码格式: {self.encoding}")
         else:
             self.logger.error("协商失败")
             raise ConnectionError("协商失败")
 
-    async def _handshake(self):
+    async def handshake(self):
         """加密握手实现"""
         try:
+            await self._negotiate()
             self.logger.info("开始加密握手")
+            self.logger.info("开始建立 TLS")
+            self.logger.info("等待 STARTTLS 命令...")
+            try:
+                raw_data = await self._recv_raw()
+                if raw_data == b"STARTTLS":
+                    self.logger.info("收到 STARTTLS 请求")
+                    await self._send_raw(b"READY")
+                    await self._upgrade_ssl()
+                else:
+                    self.logger.warning(f"未收到 STARTTLS，收到: {raw_data[:20]}")
+                    await self._send_raw(b"NO_STARTTLS")
+                    return
+            except Exception as e:
+                self.logger.error(f"STARTTLS 处理失败: {e}")
+                raise
             self.private_key, public_key = self.crypto.generate_keypair()
             self.logger.info(f"生成临时公钥，长度{len(public_key)}字节")
 
@@ -92,6 +103,11 @@ class ClientHandler(NetworkBase):
             if response == b"Client Hello":
                 await self._send_raw(b"Server Hello")
                 self.handshake_done = True
+                self.send_seq = 1
+                self.recv_seq = 1
+                self.is_ready = True
+                self._reader_task = asyncio.create_task(self._read_loop())
+                self._ctrl_task = asyncio.create_task(self._ctrl_loop())
                 self.logger.info("握手成功，加密通信建立")
             else:
                 self.logger.error("握手失败")
@@ -179,63 +195,6 @@ class ClientHandler(NetworkBase):
         )
         self.logger.info("SSL 升级完成")
 
-    async def pre_handshake(self, auth_mode: int, psk: str):
-        """处理客户端连接"""
-        await self._negotiate(auth_mode)
-        self.logger.info("===== 开始进行 PSK 密钥认证 =====")
-        challenge = secrets.token_bytes(32)
-        await self._send_raw(challenge)
-        self.logger.info("向客户端发送挑战")
-        challenge_response = await self._recv_raw()
-        verify = self.crypto.verify_response(psk, challenge, challenge_response)
-        if verify:
-            self.logger.info("PSK 密钥认证成功")
-            await self._send_raw("OK")
-        else:
-            await self._send_raw("AuthFailed")
-            self.logger.error("PSK 密钥认证失败")
-            await self.close()
-            return
-        self.logger.info("===== PSK 密钥认证结束 =====")
-        self.logger.info("===== 预先握手开始 =====")
-        await self._handshake()
-        self.logger.info("===== 预先握手结束 =====")
-
-        if auth_mode == 0:
-            self.logger.info("准备向客户端发送证书密钥文件")
-            client_key, path = self.generator.generate_key()
-            client_cert = self.generator.generate_cert(path)
-
-            await self.send(client_key, is_handshake=True)
-            await self.send(client_cert, is_handshake=True)
-            self.logger.info("证书发送完毕")
-
-        self.logger.info("等待 STARTTLS 命令...")
-        try:
-            raw_data = await self._recv_raw()
-            if raw_data == b"STARTTLS":
-                self.logger.info("收到 STARTTLS 请求")
-                await self._send_raw(b"READY")
-                await self._upgrade_ssl()
-            else:
-                self.logger.warning(f"未收到 STARTTLS，收到: {raw_data[:20]}")
-                await self._send_raw(b"NO_STARTTLS")
-                return
-        except Exception as e:
-            self.logger.error(f"STARTTLS 处理失败: {e}")
-            return
-
-        self.logger.info("===== 端到端加密握手开始 =====")
-        await self._handshake()
-        self.logger.info("===== 端到端加密握手结束 =====")
-        self.logger.info("===== 预先验证全部完成 =====")
-        self.send_seq = 1
-        self.recv_seq = 1
-        self.is_ready = True
-        # 所有握手（含 start_tls 升级）结束后才启动读循环
-        self._reader_task = asyncio.create_task(self._read_loop())
-        self._ctrl_task = asyncio.create_task(self._ctrl_loop())
-
     async def _fatal_disconnect(self):
         """当读循环退出时，标记断开并唤醒阻塞中的 receive()"""
         self._disconnected = True
@@ -296,9 +255,9 @@ class ClientHandler(NetworkBase):
             except Exception as e:
                 self.logger.error(f"响应密钥刷新失败: {e}")
 
-    async def send(self, data, is_handshake: bool = False):
+    async def send(self, data):
         """发送数据"""
-        if not self.is_ready and not is_handshake:
+        if not self.is_ready:
             raise HandshakeError("连接尚未准备好，请先完成握手")
         if self._closed:
             raise ConnectionError("连接已关闭")

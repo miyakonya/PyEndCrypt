@@ -9,65 +9,44 @@ LICENSE file in the root directory of this source tree.
 
 from tools.NetworkBase import NetworkBase
 from tools.Logger import Logger
-from tools.CredentialProvisioner import Generator
 from tools.ClientHandler import ClientHandler
 import ssl
 import asyncio
-import secrets
 
 class Server(NetworkBase):
     def __init__(self, host: str,
                  port: int,
-                 server_cert: str = "",
-                 server_key: str = "",
-                 ca_cert:str = "",
-                 ca_key: str = "",
+                 psk_key: bytes,
                  padding: int = 0,
-                 auth_mode: int = 0,
                  encoding: str = "utf-8"):
         """
         创建服务端
         :param host: 主机
         :param port: 端口
-        :param server_cert: 服务端证书文件
-        :param server_key: 服务端私钥文件
-        :param ca_cert: CA 证书文件
-        :param ca_key: CA 密钥文件
+        :param psk_key: psk 密钥
         :param padding: 数据包填充级别
-        :param auth_mode: 认证模式（0为证书 + PSK 密钥认证，1为 PSK 密钥认证）
         :param encoding: 编码格式
         """
         super().__init__(padding, encoding)
         self.logger = Logger(__name__).getLogger()
         self.encoding = encoding
         self.padding = padding
-        self.ca_key = ca_key
         self.host = host
         self.port = port
-        self.server_cert = server_cert
-        self.server_key = server_key
-        self.running = False
         self.ssl_context = None
-        self.generator = Generator(ca_cert, ca_key)
-        self.ca_cert = ca_cert
         self._server = None
         self._pending_connections = None
-        self.psk_key = None
-        if auth_mode not in (0, 1):
-            raise ValueError(f"auth_mode 只能是 0 或 1 ，但收到了{auth_mode}")
-        self.auth_mode = auth_mode
+        self.psk_key = psk_key
+        if len(self.psk_key) < 1 or len(self.psk_key) > 64:
+            raise Exception("PSK 密钥不合规，应为1~64字节")
 
     def _setup_ssl_context(self):
         """设置 SSL 上下文"""
-        self.ssl_context = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
+        self.ssl_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
         self.ssl_context.minimum_version = ssl.TLSVersion.TLSv1_3
         self.ssl_context.maximum_version = ssl.TLSVersion.TLSv1_3
-        self.ssl_context.load_cert_chain(self.server_cert, self.server_key)
-        if self.auth_mode == 0:
-            self.ssl_context.load_verify_locations(self.ca_cert)
-            self.ssl_context.verify_mode = ssl.CERT_REQUIRED
-        else:
-            self.ssl_context.verify_mode = ssl.CERT_NONE
+        self.ssl_context.verify_mode = ssl.CERT_NONE
+        self.ssl_context.set_psk_server_callback(lambda x: self.psk_key, None)
 
     async def _handle_connection(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
         client_addr = writer.get_extra_info("peername")
@@ -77,11 +56,10 @@ class Server(NetworkBase):
             writer,
             self.padding,
             self.encoding,
-            self.generator,
             self.ssl_context
         )
         try:
-            await handler.pre_handshake(self.auth_mode, self.psk_key)
+            await handler.handshake()
             if self._pending_connections is not None:
                 await self._pending_connections.put(handler)
         except Exception as e:
@@ -98,17 +76,13 @@ class Server(NetworkBase):
                 self.host,
                 self.port
             )
-            self.psk_key = secrets.token_urlsafe(32)
             self.logger.info(f"服务器启动，监听 {self.host}:{self.port}")
-            self.logger.info(f"PSK 密钥已生成: {self.psk_key}")
-            self.psk_key = self.psk_key.encode(self.encoding)
             asyncio.create_task(self._server.serve_forever())
 
         handler = await self._pending_connections.get()
         return handler
 
     async def stop(self):
-        self.running = False
         if self._server:
             self._server.close()
             await self._server.wait_closed()

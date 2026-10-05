@@ -21,8 +21,6 @@ from secrets import token_bytes
 from .exceptions import *
 import struct
 import time
-import hashlib
-import hmac
 
 class CryptoUtils:
     def __init__(self):
@@ -219,13 +217,6 @@ class CryptoUtils:
         timestamp, data, data_seq = self._unpack(ciphertext)
         self._verify(timestamp, seq, data_seq)
         return data
-
-    def get_challenge_response(self, psk, challenge):
-        return hmac.new(psk, challenge, hashlib.sha256).digest()
-
-    def verify_response(self, psk, challenge, response):
-        expected = hmac.new(psk, challenge, hashlib.sha256).digest()
-        return hmac.compare_digest(expected, response)
 
     def clear_session(self):
         """清除会话密钥"""

@@ -13,27 +13,21 @@ from tools.CryptoUtils import CryptoUtils
 from tools.Logger import Logger
 from tools.exceptions import HandshakeError
 from tools.secure_memory import clear, clear_key
-from shutil import rmtree
-import os
 import gc
 import asyncio
-import tempfile
 
 class Client(NetworkBase):
     def __init__(self, host: str,
                  port: int,
-                 ca_cert: str,
-                 psk_key: str):
+                 psk_key: bytes):
         """
         创建客户端
         :param host: 主机
         :param port: 端口
-        :param ca_cert: CA 证书文件
-        :param psk_key: PSK 密钥
+        :param psk_key: psk 密钥
         """
         super().__init__( 0, "utf-8")
         self.logger = Logger(__name__).getLogger()
-        self.ca_cert = ca_cert
         self.client_cert = None
         self.client_key = None
         self.host = host
@@ -50,9 +44,7 @@ class Client(NetworkBase):
         self._write_lock = asyncio.Lock()
         self._refresh_done = asyncio.Event()
         self._refresh_done.set()    # 密钥刷新完毕标志位
-        self.tmp_dir = os.path.join(tempfile.gettempdir(), "tmp_cert_key")
         self.auth_mode = None
-        self.psk_key = psk_key
         self.send_seq = 1
         self.recv_seq = 1
         # 读循环：唯一的读协程 + 控制帧/数据帧分流
@@ -65,6 +57,7 @@ class Client(NetworkBase):
         self._rekey_pub = None
         self._rekey_waiter = None
         self._disconnected = False
+        self.psk_key = psk_key
 
     async def _negotiate(self):
         """预先协商"""
@@ -72,15 +65,13 @@ class Client(NetworkBase):
         self.encoding = (await self._recv_raw()).decode("utf-8")
         try:
             self.padding = int((await self._recv_raw()).decode(self.encoding))
-            self.auth_mode = int((await self._recv_raw()).decode(self.encoding))
         except ValueError:
             self.logger.error("服务端发送的数据格式不正确")
             raise ValueError("服务端发送的数据格式不正确")
         await self._send_raw("OK")
-        self.psk_key = self.psk_key.encode(self.encoding)
-        self.logger.info(f"协商完毕，填充方式: {self.padding}\t编码格式: {self.encoding}\t认证模式: {self.auth_mode}")
+        self.logger.info(f"协商完毕，填充方式: {self.padding}\t编码格式: {self.encoding}")
 
-    async def _handshake(self):
+    async def handshake(self):
         """建立加密连接"""
         self.logger.info("开始加密握手")
         self.private_key, public_key = self.crypto.generate_keypair()
@@ -105,16 +96,12 @@ class Client(NetworkBase):
 
     async def _upgrade_ssl(self):
         self.logger.info("开始升级为 SSL...")
-        self.ssl_context = ssl.create_default_context(ssl.Purpose.SERVER_AUTH)
+        self.ssl_context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
         self.ssl_context.check_hostname = False
         self.ssl_context.minimum_version = ssl.TLSVersion.TLSv1_3
         self.ssl_context.maximum_version = ssl.TLSVersion.TLSv1_3
-        if self.auth_mode == 0:
-            self.ssl_context.load_verify_locations(self.ca_cert)
-            self.ssl_context.load_cert_chain(f"{self.tmp_dir}\\client.crt", f"{self.tmp_dir}\\client.key")
-            self.ssl_context.verify_mode = ssl.CERT_REQUIRED
-        else:
-            self.ssl_context.verify_mode = ssl.CERT_NONE
+        self.ssl_context.verify_mode = ssl.CERT_NONE
+        self.ssl_context.set_psk_client_callback(lambda x: ("psk-key", self.psk_key))
         await self.writer.start_tls(
             self.ssl_context,
             server_hostname=self.host
@@ -129,64 +116,19 @@ class Client(NetworkBase):
         self.writer = writer
         self.logger.info("连接成功")
         await self._negotiate()
-        self.logger.info("===== 开始进行 PSK 密钥认证 =====")
-        challenge = await self._recv_raw()
-        self.logger.info("接收到挑战")
-        challenge_response = self.crypto.get_challenge_response(self.psk_key, challenge)
-        await self._send_raw(challenge_response)
-        self.logger.info("发送挑战响应")
-        auth_msg = await self._recv_raw()
-        if auth_msg == b"OK":
-            self.logger.info("PSK 认证成功")
-        else:
-            self.logger.error("PSK 认证失败")
-            await self.close()
-            raise Exception("PSK 认证失败")
-        self.logger.info("===== PSK 密钥认证结束 =====")
-        self.logger.info("===== 预先握手开始 =====")
-        await self._handshake()
-        self.logger.info("===== 预先握手结束 =====")
-        # 第一次握手已建立会话密钥，而证书要经 receive() 读取，
-        # 所以读循环必须在这里就启动
-        self._start_loops()
-
-        if self.auth_mode == 0:
-            # 证书经读循环解密后由 receive() 取出
-            self.client_key = await self.receive()
-            self.client_cert = await self.receive()
-            if not self.client_cert or not self.client_key:
-                raise HandshakeError("无法接收到证书密钥")
-            self.logger.info(f"密钥接收完毕，共{len(self.client_key)}字节")
-            self.logger.info(f"证书接收完毕，共{len(self.client_cert)}字节")
-
-            os.makedirs(self.tmp_dir, exist_ok=True)
-            with open(f"{self.tmp_dir}\\client.key", "w+") as kw:
-                kw.write(self.client_key)
-            with open(f"{self.tmp_dir}\\client.crt", "w+") as cw:
-                cw.write(self.client_cert)
-            if not self.client_cert or not self.client_key:
-                raise HandshakeError("无法接收到证书和密钥")
-
         self.logger.info("发送 STARTTLS")
-        # 下面要直接读原始 READY 和第二次握手的公钥，先把读循环停掉
-        await self._stop_loops()
         await self._send_raw(b"STARTTLS")
         response = await self._recv_raw()
         if response != b"READY":
             raise Exception(f"服务端拒绝升级 SSL: {response}")
         await self._upgrade_ssl()
 
-        if self.auth_mode == 0:
-            rmtree(self.tmp_dir)
-
-        self.logger.info("SSL 加密完毕")
         self.logger.info("===== 端到端加密握手开始 =====")
-        await self._handshake()
+        await self.handshake()
         self.logger.info("===== 端到端加密握手结束 =====")
         self.send_seq = 1
         self.recv_seq = 1
         self.logger.info("===== 预先验证全部完成 =====")
-        # 握手期读取全部结束，重启唯一的读循环
         self._start_loops()
 
     def _start_loops(self):
