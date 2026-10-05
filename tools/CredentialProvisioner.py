@@ -15,6 +15,7 @@ import subprocess
 import os
 import shutil
 from .Logger import Logger
+from .exceptions import ProvisionError
 
 class Generator:
     def __init__(self, ca_cert: str, ca_key: str):
@@ -45,7 +46,7 @@ class Generator:
 
         except subprocess.CalledProcessError as e:
             self.logger.error(f"客户端证书生成失败: {e}")
-            raise
+            raise ProvisionError(f"客户端证书生成失败: {e}")
     def generate_key(self):
         """生成客户端密钥"""
         try:
@@ -62,8 +63,10 @@ class Generator:
 
         except subprocess.CalledProcessError as e:
             self.logger.error(f"客户端密钥生成失败: {e}")
-            raise
+            raise ProvisionError(f"客户端密钥生成失败: {e}")
         except PermissionError:
             self.logger.error("权限不足")
+            raise ProvisionError("权限不足")
         except OSError as e:
             self.logger.error(f"生成失败: {e}")
+            raise ProvisionError(f"生成失败: {e}")

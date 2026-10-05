@@ -1,5 +1,5 @@
 # coding: UTF-8
-# Python 3.10.6
+# Python 3.14.7
 
 """
 Copyright (c) 2026 super cat
@@ -14,6 +14,7 @@ LICENSE file in the root directory of this source tree.
 import logging
 import time
 import os
+import sys
 
 # 自动刷新
 class AutoFlushFileHandler(logging.FileHandler):
@@ -23,19 +24,27 @@ class AutoFlushFileHandler(logging.FileHandler):
 
 class Logger:
     def __init__(self, name: str):
-        if not os.path.exists("logs") and not os.path.isdir("logs"):
-            os.mkdir("logs")
-        file_name = time.strftime(f"{name}-%Y-%m-%d %H-%M-%S.logs", time.localtime())
-        file_handler = AutoFlushFileHandler(f"logs/{file_name}", encoding="utf-8", mode="a")
-        formatter = logging.Formatter("[%(asctime)s] [%(levelname)s] %(message)s")
-        file_handler.setFormatter(formatter)
-        logging.basicConfig(
-            level=logging.INFO,
-            format="[%(asctime)s] [%(levelname)s] %(message)s",
-            datefmt="%Y-%m-%d %H:%M:%S"
-        )
         self.logger = logging.getLogger(name)
-        self.logger.addHandler(file_handler)
+
+        # 已经配置过的直接复用
+        if self.logger.handlers:
+            return
+        os.makedirs("logs", exist_ok=True)
+        file_name = time.strftime(f"{name}-%Y-%m-%d %H-%M-%S.log", time.localtime())
+        formatter = logging.Formatter("[%(asctime)s] [%(levelname)s] %(message)s")
+
+        # 文件处理器
+        self.file_handler = AutoFlushFileHandler(f"logs/{file_name}", encoding="utf-8", mode="a")
+        self.file_handler.setFormatter(formatter)
+        self.logger.addHandler(self.file_handler)
+
+        # 控制台处理器
+        self.console_handler = logging.StreamHandler(sys.stderr)
+        self.console_handler.setFormatter(formatter)
+        self.logger.addHandler(self.console_handler)
+        self.logger.setLevel(logging.INFO)
+        self.logger.propagate = False
 
     def getLogger(self):
         return self.logger
+

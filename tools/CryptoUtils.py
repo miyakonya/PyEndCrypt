@@ -15,13 +15,14 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey, X25519PublicKey
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
-from cryptography.hazmat.backends import default_backend
 from .secure_memory import clear, clear_key
 import gc
 from secrets import token_bytes
 from .exceptions import *
 import struct
 import time
+import hashlib
+import hmac
 
 class CryptoUtils:
     def __init__(self):
@@ -45,13 +46,17 @@ class CryptoUtils:
         )
         return private_key, public_bytes
 
-    def init_session(self, peer_public_key: bytes) -> tuple:
+    def init_session(self, private_key, peer_public_key: bytes) -> bytes:
         """
         初始化会话，生成根密钥
-        :param peer_public_key: 对方公钥
-        :return: (私钥, 公钥)
+        :param private_key: 本次握手生成、并已把对应公钥发给对方的临时私钥
+        :param peer_public_key: 对方交换过来的临时公钥
+        :return: 自己的临时公钥
         """
-        private_key, public_bytes = self.generate_keypair()
+        public_bytes = private_key.public_key().public_bytes(
+            encoding=serialization.Encoding.Raw,
+            format=serialization.PublicFormat.Raw
+        )
         shared_key = self.derive_shared_key(private_key, peer_public_key)
         root_key = self.shared_key_derive_aes_key(shared_key, b"session_root")
         self._session_root_key = root_key
@@ -59,26 +64,25 @@ class CryptoUtils:
         self._session_public_key = public_bytes
         self._session_peer_public = peer_public_key
         self._session_seq_limit = 5
-        return private_key, public_bytes
+        return public_bytes
 
-    def refresh_session(self, peer_public_key: bytes) -> tuple:
+    def refresh_session(self, own_private_key, own_public_key: bytes,
+                        peer_public_key: bytes) -> None:
         """
-        刷新会话根密钥
-        :param peer_public_key: 对方的公钥
-        :return: (私钥, 公钥)
+        提交一次会话根密钥刷新
+        :param own_private_key: 本次刷新自己新生成的私钥
+        :param own_public_key: 本次刷新自己新生成的公钥
+        :param peer_public_key: 本次刷新对方新生成的公钥
         """
         seq = self._session_seq_limit
         self.clear_session()
         self._session_seq_limit = seq
-        private_key, public_key = self.generate_keypair()
-        shared_key = self.derive_shared_key(private_key, peer_public_key)
+        shared_key = self.derive_shared_key(own_private_key, peer_public_key)
         root_key = self.shared_key_derive_aes_key(shared_key, b"session_root")
         self._session_root_key = root_key
-        self._session_private_key = private_key
-        self._session_public_key = public_key
+        self._session_private_key = own_private_key
+        self._session_public_key = own_public_key
         self._session_peer_public = peer_public_key
-
-        return private_key, public_key
 
     def derive_message_key(self, seq: int) -> bytes:
         """
@@ -92,8 +96,7 @@ class CryptoUtils:
             algorithm=hashes.SHA256(),
             length=32,
             salt=b"message_salt",
-            info=struct.pack("!I", seq),
-            backend=default_backend()
+            info=struct.pack("!I", seq)
         )
         message_key = hkdf.derive(self._session_root_key)
         return message_key
@@ -110,8 +113,7 @@ class CryptoUtils:
             algorithm=hashes.SHA256(),
             length=32,
             salt=salt,
-            info=b"aes_key",
-            backend=default_backend()
+            info=b"aes_key"
         )
         return hkdf.derive(shared_key)
 
@@ -155,27 +157,22 @@ class CryptoUtils:
         diff = current_time - timestamp
         if seq != data_seq:
             raise ReplayAttackError("序列号校验失败！可能存在重放攻击！")
-        if diff > window:
+        if abs(diff) > window:
             raise ReplayAttackError(f"时间戳验证失败！时间差:{diff}秒")
         return True
 
-    def aes_encrypt(self, peer_public_key: bytes, data: bytes, seq: int) -> bytes:
+    def aes_encrypt(self, data: bytes, seq: int) -> bytes:
         """
         使用 AES 密钥加密数据
-        :param peer_public_key: 对方的 x25519 公钥
         :param data: 要加密的数据
         :param seq: 序列号
         :return: 已加密的数据(密文已包含tag)
         """
 
-        if (self._session_root_key is None or
-        self._session_peer_public != peer_public_key):
-            _, public_key = self.init_session(peer_public_key)
-        elif seq > self._session_seq_limit:
-            _, public_key = self.refresh_session(peer_public_key)
-            self._session_seq_limit += 5
-        else:
-            public_key = self._session_public_key
+        # 会话与密钥刷新只由握手和刷新流程控制，加密路径绝不隐式初始化或刷新
+        if self._session_root_key is None:
+            raise Exception("会话未初始化，不能加密")
+        public_key = self._session_public_key
         nonce = token_bytes(12)
         aes_key = bytearray(self.derive_message_key(seq))
         try:
@@ -206,8 +203,7 @@ class CryptoUtils:
             algorithm=hashes.SHA256(),
             length=32,
             salt=b"message_salt",
-            info=struct.pack("!I", seq),
-            backend=default_backend()
+            info=struct.pack("!I", seq)
         )
         aes_key = bytearray(hkdf.derive(root_key))
         try:
@@ -223,6 +219,13 @@ class CryptoUtils:
         timestamp, data, data_seq = self._unpack(ciphertext)
         self._verify(timestamp, seq, data_seq)
         return data
+
+    def get_challenge_response(self, psk, challenge):
+        return hmac.new(psk, challenge, hashlib.sha256).digest()
+
+    def verify_response(self, psk, challenge, response):
+        expected = hmac.new(psk, challenge, hashlib.sha256).digest()
+        return hmac.compare_digest(expected, response)
 
     def clear_session(self):
         """清除会话密钥"""
