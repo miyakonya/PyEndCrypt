@@ -267,7 +267,6 @@ REFRESH_ACK  + 我方新公钥(32)      # 响应轮换
 | `aes_decrypt(data, seq, private_key)`                               | 解密并校验时间戳与序列号                       |
 | `clear_session()`                                                   | 清除会话密钥                                   |
 
-> `get_challenge_response()` / `verify_response()` 是旧 PSK 挑战应答时代的遗留方法，现已无调用方。
 
 ### `Client` — 客户端
 
@@ -297,11 +296,11 @@ Server(host, port, psk_key: bytes, padding=0, encoding="utf-8")
 
 由 `Server.accept()` 返回，接口与 `Client` 对称：
 
-| 方法                                   | 说明                            |
-| -------------------------------------- | ------------------------------- |
-| `await send(data, is_handshake=False)` | 加密并发送                      |
-| `await receive()`                      | 接收并解密；`None` 表示对端断开 |
-| `await close()`                        | 关闭连接                        |
+| 方法               | 说明                            |
+|--------------------|---------------------------------|
+| `await send(data)` | 加密并发送                      |
+| `await receive()`  | 接收并解密；`None` 表示对端断开 |
+| `await close()`    | 关闭连接                        |
 
 ---
 
