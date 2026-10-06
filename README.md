@@ -148,9 +148,6 @@ if __name__ == "__main__":
     asyncio.run(main())
 ```
 
-> **关于 PSK 认证**：认证发生在 `writer.start_tls()` 那一刻。PSK 不一致时 TLS 握手失败，
-> 客户端抛 `ssl.SSLError`，服务端日志记录握手失败。**没有「握手成功后才发现 PSK 不对」的路径。**
-
 ---
 
 ## 📐数据结构
@@ -235,8 +232,6 @@ REFRESH_ACK  + 我方新公钥(32)      # 响应轮换
 
 任一方都可发起；若双方恰好同时发起，两端会复用各自已发出的公钥完成提交，收敛到同一会话（这一点有专门的回归验证覆盖）。
 
-> 注意：控制帧不受 TLS 记录层之外的额外保护；在 TLS 之内传输，因此依赖 TLS 保证完整性。
-
 ---
 
 ## 🔌API
@@ -267,6 +262,23 @@ REFRESH_ACK  + 我方新公钥(32)      # 响应轮换
 | `aes_decrypt(data, seq, private_key)`                               | 解密并校验时间戳与序列号                       |
 | `clear_session()`                                                   | 清除会话密钥                                   |
 
+### `Refresher` — 会话根密钥刷新器
+
+`Client` 与 `ClientHandler` 共用的刷新组件（`tools/Refresher.py`）。密钥轮换的**全部状态**都集中在它这里，两个宿主类只负责在正确的时机调用它，不再各自维护一份刷新状态。
+
+```python
+Refresher(logger, crypto, write_lock, send_raw, on_commit=None)
+```
+
+| 方法 / 属性                        | 说明                                                       |
+| ---------------------------------- | ---------------------------------------------------------- |
+| `await refresh_keypair()`          | 主动发起刷新：发 `REFRESH_KEY`，等对方 `REFRESH_ACK` 后提交 |
+| `await respond_key_refresh(pub)`   | 响应对方请求：回带**本方新公钥**的 `REFRESH_ACK` 后提交    |
+| `handle_refresh_ack(raw)`          | 宿主收到 `REFRESH_ACK` 时调用，把帧交给等待者              |
+| `request_pending_refresh()`        | 宿主发现 `send_seq` 超阈值时调用，登记一次待处理刷新       |
+| `await wait_until_idle()`          | 等待当前刷新结束                                           |
+| `is_refreshing` / `pending_refresh` | 当前是否正在刷新 / 是否有待处理的刷新                      |
+| `wipe()`                           | 关闭连接时清理一次性密钥                                   |
 
 ### `Client` — 客户端
 
@@ -316,6 +328,7 @@ PyEndCrypt/
     ├── CryptoUtils.py               # 应用层加解密与密钥派生
     ├── NetworkBase.py               # 定长收发基类 + 填充
     ├── ClientHandler.py             # 服务端单连接处理器
+    ├── Refresher.py                 # 会话根密钥刷新器（客户端/服务端共用）
     ├── secure_memory.py             # 敏感内存清理
     ├── Logger.py                    # 日志（文件 + 控制台，同名复用）
     ├── exceptions.py                # 异常体系
@@ -337,6 +350,7 @@ PyEndCrypt/
 - ⚫ ~~实现多客户端并发处理~~
 - ⚫ ~~每条消息独立密钥 + 双向自动密钥轮换~~
 - ⚫ ~~移除 mTLS，改用 PSK 作为唯一凭据~~
+- ⚫ ~~把密钥刷新逻辑抽成 `tools/Refresher.py`，客户端与服务端共用~~
 
 待办：
 

@@ -13,6 +13,7 @@ from tools.CryptoUtils import CryptoUtils
 from tools.Logger import Logger
 from tools.exceptions import HandshakeError
 from tools.secure_memory import clear, clear_key
+from tools.Refresher import Refresher
 import gc
 import asyncio
 
@@ -37,14 +38,9 @@ class Client(NetworkBase):
         self.padding = None
         self.server_public_key = None
         self.private_key = None
-        self.is_refreshing = False
-        self.pending_refresh = False
         self.ssl_context = None
         self.crypto = CryptoUtils()
         self._write_lock = asyncio.Lock()
-        self._refresh_done = asyncio.Event()
-        self._refresh_done.set()    # 密钥刷新完毕标志位
-        self.auth_mode = None
         self.send_seq = 1
         self.recv_seq = 1
         # 读循环：唯一的读协程 + 控制帧/数据帧分流
@@ -52,12 +48,22 @@ class Client(NetworkBase):
         self._ctrl_queue = asyncio.Queue()
         self._reader_task = None
         self._ctrl_task = None
-        self._last_committed_peer_pub = None
-        self._rekey_priv = None
-        self._rekey_pub = None
-        self._rekey_waiter = None
         self._disconnected = False
         self.psk_key = psk_key
+        # 刷新相关的全部状态都由 Refresher 持有（不要再在本类里留副本）。
+        # on_commit 负责把刷新后的新私钥/对方公钥同步回本类 —— 读循环解密要用。
+        self.refresher = Refresher(
+            self.logger,
+            self.crypto,
+            self._write_lock,
+            self._send_raw,
+            self._on_key_refreshed,
+        )
+
+    def _on_key_refreshed(self, new_private_key, peer_public_key) -> None:
+        """Refresher 提交新密钥后回调：更新本类持有的解密所需密钥。"""
+        self.private_key = new_private_key
+        self.server_public_key = peer_public_key
 
     async def _negotiate(self):
         """预先协商"""
@@ -196,106 +202,40 @@ class Client(NetworkBase):
                 continue
 
             if raw.startswith(b"REFRESH_ACK"):
-                waiter = self._rekey_waiter
-                if waiter is not None and not waiter.done():
-                    waiter.set_result(raw)
-                else:
-                    self.logger.info("收到无人等待的刷新响应，忽略")
+                # ACK 必须交给 Refresher 的 waiter，否则发起方会一直等到 10 秒超时
+                self.refresher.handle_refresh_ack(raw)
                 continue
 
             # REFRESH_KEY：交给响应方；若我方也正在刷新，它会复用已发出的公钥
             try:
                 self.logger.info("检测到刷新请求")
-                await self._respond_key_refresh(raw)
+                await self._respond_key_refresh(raw[11:43])
             except Exception as e:
                 self.logger.error(f"响应密钥刷新失败: {e}")
 
-    async def _commit_new_keypair(self, new_pri_key, new_pub_key, peer_new_pub_key):
-        # 去重：同时发起时同一把对方公钥可能被两处提交，重复提交会让阈值多涨
-        if peer_new_pub_key == self._last_committed_peer_pub:
-            self.logger.info("该会话对已提交过，跳过重复提交")
-            return
-        self._last_committed_peer_pub = peer_new_pub_key
-        # 双方新公钥到齐，一起提交
-        self.crypto.refresh_session(
-            new_pri_key,
-            new_pub_key,
-            peer_new_pub_key
-        )
-        self.server_public_key = peer_new_pub_key
-        self.private_key = new_pri_key
-        self.crypto._session_seq_limit += 5
-        self.logger.info("密钥刷新完成")
-        self.pending_refresh = False
-
-    async def _respond_key_refresh(self, raw: bytes):
+    async def _respond_key_refresh(self, peer_pub_key: bytes):
         """响应对方的会话根密钥刷新"""
-        peer_new_public_key = raw[11:43]
-        if not self.is_refreshing:
-            self.is_refreshing = True
-            self._refresh_done.clear()
-            self._rekey_priv, self._rekey_pub = self.crypto.generate_keypair()
-        try:
-            self.logger.info("响应刷新会话根密钥")
-            new_private_key, new_public_key = self._rekey_priv, self._rekey_pub
-            async with self._write_lock:
-                await self._send_raw(b"REFRESH_ACK" + new_public_key)
-
-            await self._commit_new_keypair(new_private_key, new_public_key, peer_new_public_key)
-        except Exception as e:
-            self.logger.error(f"密钥刷新失败: {e}")
-            raise
-        finally:
-            self._rekey_priv = None
-            self._rekey_pub = None
-            self._refresh_done.set()
-            self.is_refreshing = False
+        await self.refresher.respond_key_refresh(peer_pub_key)
 
     async def _refresh_keypair(self):
         """刷新会话根密钥（双方交换新公钥后再提交）"""
-        if self.is_refreshing:
-            self.logger.warning("密钥刷新进行中，跳过")
-            return
-        self.is_refreshing = True
-        try:
-            self._refresh_done.clear()
-            self.logger.info("开始刷新会话根密钥")
-            # 生成自己的新临时密钥对，把新公钥随刷新请求发给服务端
-            new_private_key, new_public_key = self.crypto.generate_keypair()
-            self._rekey_priv, self._rekey_pub = new_private_key, new_public_key
-            async with self._write_lock:
-                await self._send_raw(b"REFRESH_KEY" + new_public_key)
-
-            self.logger.info("等待服务端的新公钥...")
-            self._rekey_waiter = loop = asyncio.get_running_loop().create_future()
-            raw = await asyncio.wait_for(loop, timeout=10)
-            peer_new_public_key = raw[11:43]
-            await self._commit_new_keypair(new_private_key, new_public_key, peer_new_public_key)
-        except Exception as e:
-            self.logger.error(f"密钥刷新失败: {e}")
-            raise
-        finally:
-            self._rekey_waiter = None
-            self._rekey_priv = None
-            self._rekey_pub = None
-            self._refresh_done.set()
-            self.is_refreshing = False
+        await self.refresher.refresh_keypair()
 
     async def send(self, data):
         if not self.handshake_done:
             raise HandshakeError("没有完成加密握手")
-        if self.send_seq > self.crypto._session_seq_limit and not self.is_refreshing:
-            self.pending_refresh = True
+        refresher = self.refresher
+        if self.send_seq > self.crypto._session_seq_limit and not refresher.is_refreshing:
+            refresher.request_pending_refresh()
 
         # 检查是否需要刷新密钥
         while True:
-            await self._refresh_done.wait()
-            if self.is_refreshing:
+            await refresher.wait_until_idle()
+            if refresher.is_refreshing:
                 continue
-            if self.pending_refresh:
+            if refresher.pending_refresh:
                 self.logger.info("执行待处理的密钥刷新")
                 await self._refresh_keypair()
-                self.pending_refresh = False
                 continue
             break
 
@@ -326,6 +266,7 @@ class Client(NetworkBase):
         await super().close()
         self.send_seq = 1
         self.recv_seq = 1
+        self.refresher.wipe()
         self.crypto.clear_session()
         if self.private_key:
             clear_key(self.private_key)
