@@ -105,9 +105,8 @@ class NetworkBase:
         length = len(data)
         if length > self.MAX_SIZE:
             raise PacketTooLargeError("发送的数据包太大！")
-        header = struct.pack("!I", length)
-        data = header + data
-        self.writer.write(data)
+        total_length = struct.pack("!I", len(data))
+        self.writer.write(total_length + data)
         await self.writer.drain()
 
     async def _recv_raw(self) -> bytes:
@@ -117,8 +116,8 @@ class NetworkBase:
         """
         try:
             # 接收数据总长度
-            header = await self._recv_exact(4)
-            length = struct.unpack("!I", header)[0]
+            total_length = await self._recv_exact(4)
+            length = struct.unpack("!I", total_length)[0]
             body = await self._recv_exact(length)
             if len(body) > self.MAX_SIZE:
                 raise PacketTooLargeError("接收到了过大的数据包！")

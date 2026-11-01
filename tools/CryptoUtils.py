@@ -140,7 +140,7 @@ class CryptoUtils:
         timestamp = struct.unpack("!Q", timestamp_bytes)[0]
         data_seq = struct.unpack("!I", seq_bytes)[0]
         rdata = data[12:]
-        return timestamp, rdata, data_seq
+        return timestamp, data_seq, rdata
 
     def _verify(self, timestamp: int, seq: int, data_seq: int, window=300) -> bool:
         """
@@ -159,63 +159,49 @@ class CryptoUtils:
             raise ReplayAttackError(f"时间戳验证失败！时间差:{diff}秒")
         return True
 
-    def aes_encrypt(self, data: bytes, seq: int) -> bytes:
+    def aes_encrypt(self, data: bytes, seq: int, frame_type: int) -> bytes:
         """
         使用 AES 密钥加密数据
         :param data: 要加密的数据
         :param seq: 序列号
+        :param frame_type: 本条消息的帧格式
         :return: 已加密的数据(密文已包含tag)
         """
-
-        # 会话与密钥刷新只由握手和刷新流程控制，加密路径绝不隐式初始化或刷新
+        frame_type = struct.pack("!I", frame_type)
         if self._session_root_key is None:
             raise Exception("会话未初始化，不能加密")
-        public_key = self._session_public_key
         nonce = token_bytes(12)
         aes_key = bytearray(self.derive_message_key(seq))
         try:
-            packed_data = self._pack(data, seq)
             aesgcm = AESGCM(aes_key)
-            ciphertext = aesgcm.encrypt(nonce, packed_data, None)
-            return nonce + public_key + ciphertext
+            ciphertext = self._pack(frame_type + data, seq)
+            ciphertext = aesgcm.encrypt(nonce, ciphertext, None)
+            return nonce + ciphertext
         finally:
             clear(aes_key)
             del aes_key
 
-    def aes_decrypt(self, data: bytes, seq: int, private_key: X25519PrivateKey) -> bytes:
+    def aes_decrypt(self, ciphertext: bytes, seq: int, nonce: bytes) -> bytes:
         """
         使用 AES 密钥解密数据
-        :param data: 加密的数据
+        :param ciphertext: 加密的数据
         :param seq: 序列号
-        :param private_key: x25519 私钥
+        :param nonce: 加密本条消息所用的 nonce
         :return: 已解密的数据
         """
-        # 从数据中分离nonce、公钥和密文
-        nonce = data[:12]
-        public_key = data[12:44]
-        encrypted_data = data[44:]
         # 重新生成 AES 密钥
-        shared_key = self.derive_shared_key(private_key, public_key)
-        root_key = self.shared_key_derive_aes_key(shared_key, b"session_root")
-        hkdf = HKDF(
-            algorithm=hashes.SHA256(),
-            length=32,
-            salt=b"message_salt",
-            info=struct.pack("!I", seq)
-        )
-        aes_key = bytearray(hkdf.derive(root_key))
+        aes_key = bytearray(self.derive_message_key(seq))
         try:
             aesgcm = AESGCM(aes_key)
             # 这里会自动验证tag
-            ciphertext = aesgcm.decrypt(nonce, encrypted_data, None)
+            message = aesgcm.decrypt(nonce, ciphertext, None)
+            timestamp, data_seq, data = self._unpack(message)
+            self._verify(timestamp, seq, data_seq)
         except Exception as e:
             raise DecryptionError(f"AES-GCM 认证失败，数据可能被篡改: {e}") from e
         finally:
-            clear(shared_key)
-            clear(root_key)
             clear(aes_key)
-        timestamp, data, data_seq = self._unpack(ciphertext)
-        self._verify(timestamp, seq, data_seq)
+            del aes_key
         return data
 
     def clear_session(self):

@@ -8,6 +8,8 @@ LICENSE file in the root directory of this source tree.
 # Python 3.14.7
 
 import ssl
+import struct
+
 from tools.NetworkBase import NetworkBase
 from tools.CryptoUtils import CryptoUtils
 from tools.Logger import Logger
@@ -45,20 +47,20 @@ class Client(NetworkBase):
         self.recv_seq = 1
         # 读循环：唯一的读协程 + 控制帧/数据帧分流
         self._data_queue = asyncio.Queue()
-        self._ctrl_queue = asyncio.Queue()
         self._reader_task = None
-        self._ctrl_task = None
         self._disconnected = False
         self.psk_key = psk_key
+        self.padding = 0
         # 刷新相关的全部状态都由 Refresher 持有（不要再在本类里留副本）。
         # on_commit 负责把刷新后的新私钥/对方公钥同步回本类 —— 读循环解密要用。
         self.refresher = Refresher(
             self.logger,
             self.crypto,
             self._write_lock,
-            self._send_raw,
-            self._on_key_refreshed,
+            self._send_frame,
+            self._on_key_refreshed
         )
+        self.ctrl_frame = [0x11, 0x12, 0x13, 0x14]
 
     def _on_key_refreshed(self, new_private_key, peer_public_key) -> None:
         """Refresher 提交新密钥后回调：更新本类持有的解密所需密钥。"""
@@ -138,26 +140,24 @@ class Client(NetworkBase):
         self._start_loops()
 
     def _start_loops(self):
-        """启动唯一的读循环与控制帧循环"""
+        """启动唯一的读循环"""
         if self._reader_task is not None:
             return
         self._reader_task = asyncio.create_task(self._read_loop())
-        self._ctrl_task = asyncio.create_task(self._ctrl_loop())
 
     async def _stop_loops(self):
-        """停止读循环与控制帧循环"""
-        for task in (self._reader_task, self._ctrl_task):
-            if task:
-                task.cancel()
-                try:
-                    await task
-                except asyncio.CancelledError:
-                    pass
-        self._reader_task = None
-        self._ctrl_task = None
+        """停止读循环"""
+        task, self._reader_task = self._reader_task, None
+        if task is None:
+            return
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
 
-    async def _fatal_disconnect(self):
-        """当读循环退出时，标记断开并唤醒阻塞中的 receive()"""
+    def _fatal_disconnect(self):
+        """标记断开并唤醒阻塞中的 receive()"""
         self._disconnected = True
         self._data_queue.put_nowait(None)
 
@@ -170,56 +170,50 @@ class Client(NetworkBase):
                 raise
             except Exception as e:
                 self.logger.info(f"连接读取结束: {e}")
-                self._disconnected = True
-                await self._data_queue.put(None)      # 通知业务层断开
+                self._fatal_disconnect()
                 return
 
-            # 控制帧（REFRESH_KEY / REFRESH_ACK）：交给 _ctrl_loop，绝不落到业务层
-            if raw.startswith(b"REFRESH_"):
-                await self._ctrl_queue.put(raw)
-                continue
-
-            # 数据帧：序列号只在这里推进
             try:
-                data = self.crypto.aes_decrypt(raw, self.recv_seq, self.private_key)
-                if self.padding != 0:
-                    data = await self._remove_padding(data)
-                self.logger.info(f"当前序列号: {self.recv_seq}")
-                self.logger.info(f"[Server]->[Client]: 接收{len(data)}字节")
+                msg = self.crypto.aes_decrypt(raw[12:], self.recv_seq, raw[:12])
+                frame_type = struct.unpack("!I", msg[:4])[0]
+                payload = msg[4:]
                 self.recv_seq += 1
-                await self._data_queue.put(data.decode(self.encoding))
             except Exception as e:
                 self.logger.error(f"解密失败: {e}，连接已终止")
-                await self._fatal_disconnect()
+                self._fatal_disconnect()
                 return
 
-    async def _ctrl_loop(self):
-        """唯一消费控制帧的地方：请求交给响应方，响应交给发起方"""
-        while True:
-            raw = await self._ctrl_queue.get()
-            if len(raw) != 11 + 32:
-                self.logger.error("刷新帧格式不正确，忽略")
+            # 填充在 _send_frame 里统一添加，这里对所有帧统一去除
+            if self.padding != 0:
+                payload = await self._remove_padding(payload)
+
+            if frame_type in self.ctrl_frame:
+                await self._handle_ctrl(frame_type, payload)
                 continue
 
-            if raw.startswith(b"REFRESH_ACK"):
-                # ACK 必须交给 Refresher 的 waiter，否则发起方会一直等到 10 秒超时
-                self.refresher.handle_refresh_ack(raw)
-                continue
+            await self._data_queue.put(payload.decode(self.encoding))
 
-            # REFRESH_KEY：交给响应方；若我方也正在刷新，它会复用已发出的公钥
-            try:
-                self.logger.info("检测到刷新请求")
-                await self._respond_key_refresh(raw[11:43])
-            except Exception as e:
-                self.logger.error(f"响应密钥刷新失败: {e}")
+    async def _handle_ctrl(self, frame_type: int, payload: bytes):
+        """控制帧处理"""
+        if frame_type == 0x12:
+            self.refresher.handle_refresh_ack(payload)
+        elif frame_type == 0x11:
+            await self.refresher.respond_key_refresh(payload)
+        else:
+            self.logger.warning(f"未实现的控制帧: 0x{frame_type:02x}")
 
-    async def _respond_key_refresh(self, peer_pub_key: bytes):
-        """响应对方的会话根密钥刷新"""
-        await self.refresher.respond_key_refresh(peer_pub_key)
+    async def _send_frame(self, frame_type: int, payload: bytes) -> None:
+        """统一的加密发送路径：填充、分配 seq、加密、写入在同一把锁内完成。
 
-    async def _refresh_keypair(self):
-        """刷新会话根密钥（双方交换新公钥后再提交）"""
-        await self.refresher.refresh_keypair()
+        业务帧与控制帧都走这里，因此两者的填充规则完全一致。
+        """
+        async with self._write_lock:
+            seq = self.send_seq
+            self.send_seq += 1          # 先占号再 await，避免并发拿到同一个 seq
+            if self.padding != 0:
+                payload = await self._add_padding(payload)
+            edata = self.crypto.aes_encrypt(payload, seq, frame_type)
+            await self._send_raw(edata)
 
     async def send(self, data):
         if not self.handshake_done:
@@ -235,31 +229,19 @@ class Client(NetworkBase):
                 continue
             if refresher.pending_refresh:
                 self.logger.info("执行待处理的密钥刷新")
-                await self._refresh_keypair()
+                await refresher.refresh_keypair()
                 continue
             break
 
         if not isinstance(data, bytes):
             data = str(data).encode(self.encoding)
-        if self.padding != 0:
-            data = await self._add_padding(data)
-        edata = self.crypto.aes_encrypt(data, self.send_seq)
-        # 发送已加密的数据
-        async with self._write_lock:
-            await self._send_raw(edata)
-        self.logger.info(f"当前序列号: {self.send_seq}")
+        await self._send_frame(0x01, data)
         self.logger.info(f"[Client]->[Server]: 发送{len(data)}字节")
-        self.send_seq += 1
 
     async def receive(self):
-        if not self.handshake_done:
-            raise HandshakeError("没有完成加密握手")
         if self._disconnected and self._data_queue.empty():
             return None
-        data = await self._data_queue.get()
-        if data is None:
-            self.logger.info("服务端断开连接")
-        return data
+        return await self._data_queue.get()
 
     async def close(self):
         await self._stop_loops()
