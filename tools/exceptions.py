@@ -12,11 +12,7 @@ class PaddingError(PyEndCryptError):
     pass
 class PacketTooLargeError(PyEndCryptError):
     pass
-class SocketNotInitializedError(PyEndCryptError):
-    pass
 class ConnectionLostError(PyEndCryptError):
     pass
 class HandshakeError(PyEndCryptError):
-    pass
-class ProvisionError(PyEndCryptError):
     pass

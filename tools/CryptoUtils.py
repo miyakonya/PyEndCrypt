@@ -24,7 +24,6 @@ import time
 
 class CryptoUtils:
     def __init__(self):
-        self.TIMEOUT = 300   # 5分钟
         self._session_root_key = None
         self._session_private_key = None
         self._session_public_key = None

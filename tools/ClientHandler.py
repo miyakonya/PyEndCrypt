@@ -13,7 +13,6 @@ from tools.NetworkBase import NetworkBase
 from tools.CryptoUtils import CryptoUtils
 from tools.Logger import Logger
 from tools.exceptions import HandshakeError
-from tools.secure_memory import clear, clear_key
 from tools.Refresher import Refresher
 import ssl
 import gc
@@ -30,9 +29,6 @@ class ClientHandler(NetworkBase):
         self.writer: asyncio.StreamWriter = writer
         self.ssl_context = ssl_context
         self.logger = Logger(__name__).getLogger()
-        self.handshake_done = False
-        self.client_public_key = None
-        self.private_key = None
         self.is_ready = False
         self._closed = False
         self.crypto = CryptoUtils()
@@ -43,19 +39,9 @@ class ClientHandler(NetworkBase):
         self._data_queue = asyncio.Queue()
         self._reader_task = None
         self._disconnected = False
-        self.refresher = Refresher(
-            self.logger,
-            self.crypto,
-            self._write_lock,
-            self._send_frame,
-            self._on_key_refreshed,
-        )
+        # 刷新相关的全部状态都由 Refresher 持有
+        self.refresher = Refresher(self.logger, self.crypto, self._send_frame)
         self.ctrl_frame = [0x11, 0x12, 0x13, 0x14]
-
-    def _on_key_refreshed(self, new_private_key, peer_public_key) -> None:
-        """Refresher 提交新密钥后回调：更新本类持有的解密所需密钥。"""
-        self.private_key = new_private_key
-        self.client_public_key = peer_public_key
 
     async def _negotiate(self):
         """预先协商"""
@@ -89,25 +75,24 @@ class ClientHandler(NetworkBase):
             except Exception as e:
                 self.logger.error(f"STARTTLS 处理失败: {e}")
                 raise
-            self.private_key, public_key = self.crypto.generate_keypair()
+            private_key, public_key = self.crypto.generate_keypair()
             self.logger.info(f"生成临时公钥，长度{len(public_key)}字节")
 
-            self.client_public_key = await self._recv_raw()
-            if not self.client_public_key or len(self.client_public_key) != 32:
+            peer_public_key = await self._recv_raw()
+            if not peer_public_key or len(peer_public_key) != 32:
                 self.logger.error("接收客户端临时公钥失败")
                 raise HandshakeError("接收客户端临时公钥失败")
-            self.logger.info(f"接收到客户端临时公钥，长度{len(self.client_public_key)}字节")
+            self.logger.info(f"接收到客户端临时公钥，长度{len(peer_public_key)}字节")
 
             await self._send_raw(public_key)
             self.logger.info("发送临时公钥给客户端")
 
-            self.crypto.init_session(self.private_key, self.client_public_key)
+            self.crypto.init_session(private_key, peer_public_key)
             self.logger.info("初始化会话完毕")
 
             response = await self._recv_raw()
             if response == b"Client Hello":
                 await self._send_raw(b"Server Hello")
-                self.handshake_done = True
                 self.send_seq = 1
                 self.recv_seq = 1
                 self.is_ready = True
@@ -235,10 +220,6 @@ class ClientHandler(NetworkBase):
         self._closed = True
         self.refresher.wipe()
         await super().close()
-        self.crypto.clear_session()
-        if self.private_key:
-            clear_key(self.private_key)
-        if self.client_public_key:
-            clear(self.client_public_key)
+        self.crypto.clear_session()      # 会话密钥由 CryptoUtils 独占持有并清理
         gc.collect()
         gc.collect()

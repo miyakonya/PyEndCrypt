@@ -14,20 +14,16 @@ LICENSE file in the root directory of this source tree.
 import asyncio
 
 class Refresher:
-    def __init__(self, logger, crypto, write_lock, send_frame, on_commit=None):
+    def __init__(self, logger, crypto, send_frame):
         """
         :param logger: 宿主使用的 logger
         :param crypto: CryptoUtils 实例（会话根密钥由它持有）
-        :param write_lock: 宿主的 asyncio.Lock（保留参数，实际加锁在 send_frame 内）
         :param send_frame: 宿主发送加密帧的方法
                            ``async (frame_type: int, payload: bytes) -> None``
-        :param on_commit: 提交新密钥后的回调 ``(new_private_key, peer_public_key) -> None``
         """
         self.logger = logger
         self.crypto = crypto
-        self._write_lock = write_lock
         self.send_frame = send_frame
-        self._on_commit = on_commit
 
         self._rekey_waiter = None
         self._rekey_priv = None
@@ -37,12 +33,6 @@ class Refresher:
         self.is_refreshing = False
         self.pending_refresh = False
         self._last_committed_peer_pub = None
-
-
-    @property
-    def waiter(self):
-        """等待 REFRESH_ACK 的 future"""
-        return self._rekey_waiter
 
     def request_pending_refresh(self):
         """宿主发现 send_seq 超过阈值时调用。"""
@@ -76,8 +66,6 @@ class Refresher:
             peer_new_pub_key
         )
         self.crypto._session_seq_limit += 5
-        if self._on_commit is not None:
-            self._on_commit(new_pri_key, peer_new_pub_key)
         self.pending_refresh = False
         self.logger.info("密钥刷新完成")
 

@@ -283,13 +283,14 @@ if __name__ == "__main__":
 `Client` 与 `ClientHandler` 共用的刷新组件（`tools/Refresher.py`）。刷新相关的**全部状态**（是否正在刷新、待处理标记、等待 ACK 的 future、临时密钥对）都集中在它这里；**发帧动作交给宿主**，由宿主注入的 `send_frame` 负责分配序号、加密和写入。
 
 ```python
-Refresher(logger, crypto, write_lock, send_frame, on_commit=None)
+Refresher(logger, crypto, send_frame)
 ```
 
 | 参数 | 说明 |
 | --- | --- |
-| `send_frame` | 宿主注入的发送方法 `async (frame_type: int, payload: bytes) -> None` |
-| `on_commit` | 提交新密钥后的回调 `(new_private_key, peer_public_key) -> None`，宿主据此更新解密所需的私钥与对方公钥 |
+| `send_frame` | 宿主注入的发送方法 `async (frame_type: int, payload: bytes) -> None`，负责填充、分配序号、加密与写入 |
+
+> 刷新只改 `CryptoUtils` 内部的根密钥，宿主持有的密钥副本已不再需要，因此没有"提交后同步回宿主"的回调。
 
 | 方法 / 属性 | 说明 |
 | --- | --- |

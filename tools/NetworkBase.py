@@ -125,7 +125,7 @@ class NetworkBase:
         except asyncio.IncompleteReadError as e:
             if e.expected == 4 and e.partial == b'':
                 raise ConnectionLostError("对方断开连接")
-        except (PacketTooLargeError, ConnectionLostError, SocketNotInitializedError):
+        except (PacketTooLargeError, ConnectionLostError):
             raise
         except Exception as e:
             raise ConnectionLostError(f"接收数据包失败: {e}") from e

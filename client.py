@@ -14,7 +14,6 @@ from tools.NetworkBase import NetworkBase
 from tools.CryptoUtils import CryptoUtils
 from tools.Logger import Logger
 from tools.exceptions import HandshakeError
-from tools.secure_memory import clear, clear_key
 from tools.Refresher import Refresher
 import gc
 import asyncio
@@ -31,15 +30,11 @@ class Client(NetworkBase):
         """
         super().__init__( 0, "utf-8")
         self.logger = Logger(__name__).getLogger()
-        self.client_cert = None
-        self.client_key = None
         self.host = host
         self.port = port
         self.handshake_done = False
         self.encoding = None
-        self.padding = None
-        self.server_public_key = None
-        self.private_key = None
+        self.padding = 0
         self.ssl_context = None
         self.crypto = CryptoUtils()
         self._write_lock = asyncio.Lock()
@@ -50,22 +45,9 @@ class Client(NetworkBase):
         self._reader_task = None
         self._disconnected = False
         self.psk_key = psk_key
-        self.padding = 0
-        # 刷新相关的全部状态都由 Refresher 持有（不要再在本类里留副本）。
-        # on_commit 负责把刷新后的新私钥/对方公钥同步回本类 —— 读循环解密要用。
-        self.refresher = Refresher(
-            self.logger,
-            self.crypto,
-            self._write_lock,
-            self._send_frame,
-            self._on_key_refreshed
-        )
+        # 刷新相关的全部状态都由 Refresher 持有
+        self.refresher = Refresher(self.logger, self.crypto, self._send_frame)
         self.ctrl_frame = [0x11, 0x12, 0x13, 0x14]
-
-    def _on_key_refreshed(self, new_private_key, peer_public_key) -> None:
-        """Refresher 提交新密钥后回调：更新本类持有的解密所需密钥。"""
-        self.private_key = new_private_key
-        self.server_public_key = peer_public_key
 
     async def _negotiate(self):
         """预先协商"""
@@ -82,16 +64,16 @@ class Client(NetworkBase):
     async def handshake(self):
         """建立加密连接"""
         self.logger.info("开始加密握手")
-        self.private_key, public_key = self.crypto.generate_keypair()
+        private_key, public_key = self.crypto.generate_keypair()
         self.logger.info(f"生成临时公钥，长度{len(public_key)}字节")
         await self._send_raw(public_key)
         self.logger.info("发送临时公钥给服务器")
-        self.server_public_key = await self._recv_raw()
-        if not self.server_public_key or len(self.server_public_key) != 32:
+        peer_public_key = await self._recv_raw()
+        if not peer_public_key or len(peer_public_key) != 32:
             self.logger.error("接收服务器临时公钥失败")
             raise HandshakeError("接收服务器临时公钥失败")
-        self.logger.info(f"接收到服务器临时公钥，长度{len(self.server_public_key)}字节")
-        self.crypto.init_session(self.private_key, self.server_public_key)
+        self.logger.info(f"接收到服务器临时公钥，长度{len(peer_public_key)}字节")
+        self.crypto.init_session(private_key, peer_public_key)
         self.logger.info("初始化会话完毕")
         await self._send_raw(b"Client Hello")
         response = await self._recv_raw()
@@ -249,10 +231,6 @@ class Client(NetworkBase):
         self.send_seq = 1
         self.recv_seq = 1
         self.refresher.wipe()
-        self.crypto.clear_session()
-        if self.private_key:
-            clear_key(self.private_key)
-        if self.server_public_key:
-            clear(self.server_public_key)
+        self.crypto.clear_session()      # 会话密钥由 CryptoUtils 独占持有并清理
         gc.collect()
         gc.collect()
